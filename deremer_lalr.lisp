@@ -323,7 +323,6 @@
 		 (setf found (detect-loop rel s :visited (cons x visited) :test test))))
     found))
   
-
 (defun transitions (goto-table)
   (let ((node-list nil))
     (dolist (row goto-table node-list)

@@ -55,6 +55,16 @@
   (first-symbols-array nil)
   )
 
+(defstruct (rule
+	    (:constructor make-rule (lhs rhs)))
+  id
+  (lhs :type number)
+  (rhs :type list))
+
+(defun rule-equal-p (r1 r2)
+  (= (rule-id r1) (rule-id r2)))
+
+
 (defun canonicalize (grammar &key start eof (unknown-symbol ""))
   (let* ((ntset (remove-duplicates (mapcar #'car (grammar-rules grammar)) :test #'equal))
 	 (tset (set-difference (remove-duplicates (apply #'append (mapcar #'cdr (grammar-rules grammar))) :test #'equal) ntset :test #'equal))
@@ -141,8 +151,8 @@
 (defun drop (n l)
   (if (< 0 n) (drop (- n 1) (rest l)) l))
 
-(defun set-eq (s1 s2)
-  (null (set-exclusive-or s1 s2 :test #'equal)))
+(defun set-eq (s1 s2 &key (test #'equal))
+  (null (set-exclusive-or s1 s2 :test test)))
 
 ;; nullability-checker
 (defun calc-nullable (cg)
@@ -178,25 +188,43 @@
 	     (dotimes (X (cg-nt-num cg))
 	       (let ((old-x-firsts (copy-list (aref firsts X))))
 		 ;; all [X -> Y_1 .. Y_n]s
-		 (dolist (rule (filter #'(lambda (rule) (= X (rule-lhs rule))) (cg-rules cg)))
-		   (let ((all-null t))
-		     (loop while all-null
-			   for Y in (rule-rhs rule)
-			   do (let ((y-firsts (aref firsts Y))
-				    (null-exists nil))
-				(dolist (symbol y-firsts)
-				  (if (null symbol)
-				      (setf null-exists t)
-				      (pushnew symbol (aref firsts X) :test #'equal)))
-				;; if nil isn't in y-firsts, we don't have to look rest [Y_i]s.
-				(unless null-exists (setf all-null nil))))
-		     ;; n = 0 or all Y_i's firsts has nil.
-		     (when all-null
-		       (pushnew nil (aref firsts X) :test #'equal))))
+		 (dolist (rule (cg-rules cg))
+		   (when (= X (rule-lhs rule))
+		     (let ((all-null t))
+		       (loop while all-null
+			     for Y in (rule-rhs rule)
+			     do (let ((y-firsts (aref firsts Y))
+				      (null-exists nil))
+				  (dolist (symbol y-firsts)
+				    (if (null symbol)
+					(setf null-exists t)
+					(pushnew symbol (aref firsts X) :test #'=)))
+				  ;; if nil isn't in y-firsts, we don't have to look rest [Y_i]s.
+				  (unless null-exists (setf all-null nil))))
+		       ;; n = 0 or all Y_i's firsts has nil.
+		       (when all-null
+			 (pushnew nil (aref firsts X) :test #'equal)))))
 		 (unless (set-eq old-x-firsts (aref firsts X))
 		   (setf changed t)))))
     (setf (cg-first-array cg) firsts)))
 		     
+(defun nt-derive-first (cg symbol &optional (seen nil))
+  (let ((rules (cg-rules cg))
+	(result nil))
+    (dolist (rule rules result)
+      (when (and (= symbol (rule-lhs rule))
+		 (rule-rhs rule))
+	(let ((X (first (rule-rhs rule))))
+	  (when (and (cg-non-terminal-p cg X)
+		     (not (member X seen)))
+	    (pushnew X result)
+	    (setf result (union result (nt-derive-first cg X (cons symbol seen))))))))))
+	
+
+		 
+	
+
+
 (defun cg-sequence-first (cg sequence)
   (if (null sequence) nil
       (let ((firsts (cg-first cg (first sequence))))
@@ -284,6 +312,7 @@
 
 ;; (declaim (inline item-equal-p))
 (defun item-equal-p (i1 i2)
+<<<<<<< HEAD
   ;; ;; (declare (type item i1 i2))
   (and (= (item-lhs i1) (item-lhs i2))
        (equalp (item-pre i1) (item-pre i2))
