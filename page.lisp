@@ -55,15 +55,6 @@
   (first-symbols-array nil)
   )
 
-(defstruct (rule
-	    (:constructor make-rule (lhs rhs)))
-  id
-  (lhs :type number)
-  (rhs :type list))
-
-(defun rule-equal-p (r1 r2)
-  (= (rule-id r1) (rule-id r2)))
-
 
 (defun canonicalize (grammar &key start eof (unknown-symbol ""))
   (let* ((ntset (remove-duplicates (mapcar #'car (grammar-rules grammar)) :test #'equal))
@@ -309,14 +300,6 @@
 	  (cg-symbol cg (item-lhs item))
 	  (mapcar #'(lambda (x) (cg-symbol cg x)) (reverse (item-pre item)))
 	  (mapcar #'(lambda (x) (cg-symbol cg x)) (item-suc item))))
-
-;; (declaim (inline item-equal-p))
-(defun item-equal-p (i1 i2)
-<<<<<<< HEAD
-  ;; ;; (declare (type item i1 i2))
-  (and (= (item-lhs i1) (item-lhs i2))
-       (equalp (item-pre i1) (item-pre i2))
-       (equalp (item-suc i1) (item-suc i2))))
 
 
 (defstruct (kernel
