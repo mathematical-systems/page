@@ -1,0 +1,24 @@
+digraph lalr1_g10 {
+  graph [rankdir = LR];
+  0 [shape=record, label="{0|{[START\ -\>\ ・\ A\ $\ ,\ ]\l[A\ -\>\ ・\ b\ B\ ,\ ]\l[A\ -\>\ ・\ a\ ,\ ]\l}}"];
+  0 -> 3 [label="A"];
+  0 -> 2 [label="b"];
+  0 -> 1 [label="a"];
+  1 [shape=record, label="{1|{[A\ -\>\ ・\ a\ ,\ $]\l}}"];
+  2 [shape=record, label="{2|{[A\ -\>\ ・\ b\ B\ ,\ ]\l[B\ -\>\ ・\ c\ C\ ,\ ]\l}}"];
+  2 -> 6 [label="B"];
+  2 -> 5 [label="c"];
+  3 [shape=record, label="{3|{[START\ -\>\ ・\ A\ $\ ,\ ]\l}}"];
+  3 -> 4 [label="$"];
+  4 [shape=record, label="{4|{[START\ -\>\ ・\ A\ $\ ,\ ]\l}}"];
+  5 [shape=record, label="{5|{[B\ -\>\ ・\ c\ C\ ,\ ]\l[C\ -\>\ ・\ d\ A\ ,\ ]\l}}"];
+  5 -> 8 [label="C"];
+  5 -> 7 [label="d"];
+  6 [shape=record, label="{6|{[A\ -\>\ ・\ b\ B\ ,\ $]\l}}"];
+  7 [shape=record, label="{7|{[A\ -\>\ ・\ b\ B\ ,\ ]\l[C\ -\>\ ・\ d\ A\ ,\ ]\l[A\ -\>\ ・\ a\ ,\ ]\l}}"];
+  7 -> 2 [label="b"];
+  7 -> 9 [label="A"];
+  7 -> 1 [label="a"];
+  8 [shape=record, label="{8|{[B\ -\>\ ・\ c\ C\ ,\ $]\l}}"];
+  9 [shape=record, label="{9|{[C\ -\>\ ・\ d\ A\ ,\ $]\l}}"];
+}
