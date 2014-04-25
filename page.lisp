@@ -71,8 +71,9 @@
     (loop for symbol in tset
 	  do (push (cons symbol num) symbol-alist)
 	     (incf num))
+    (push (cons unknown-symbol num) symbol-alist)
     ;; make symbol-array and canonical-grammar
-    (let ((symbol-array (make-array (+ num 1) :initial-element nil))
+    (let ((symbol-array (make-array (+ num 2) :initial-element nil))
 	  (rules (cons (make-rule 0 (list (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal)) num))
 		       (mapcar #'(lambda (rule)
 				   (let ((r (mapcar #'(lambda (x) (cdr (assoc x symbol-alist :test #'equal))) rule)))
@@ -105,7 +106,9 @@
 (defun cg-first (cg n)
   ;; (declare (canonical-grammar cg))
   (unless (cg-first-array cg) (calc-first cg))
-  (aref (cg-first-array cg) n))
+  (if (< n (cg-num cg))
+      (aref (cg-first-array cg) n)
+      (list n)))
 
 (defun cg-follow (cg n)
   ;; (declare (canonical-grammar cg))
@@ -263,12 +266,14 @@
   (position :type number))
 
 (defun item-lhs (item) (rule-lhs (item-rule item)))
-(defun item-rhs (item) (rule-rhs (item-rule item)))
+(defun item-rhs (item) (declare (type item item)) (rule-rhs (item-rule item)))
 (defun item-pre (item) (take (item-position item) (item-rhs item)))
 (defun item-suc (item) (drop (item-position item) (item-rhs item)))
 (defun item-suc-null (item)
+  (declare (type item item))
   (= (item-position item) (length (item-rhs item))))
 (defun item-next (item)
+  (declare (type item item))
   (declare (optimize (speed 3) (space 0)))
   (nth (item-position item) (item-rhs item)))
 
@@ -286,6 +291,15 @@
 	 (< (item-position i1) (item-position i2)))
 	(t nil)))
 
+(defun lr1-item< (i1 i2)
+  (cond ((eq i1 i2) nil)
+	((item< (lr1-item-body i1) (lr1-item-body i2)) t)
+	((item= (lr1-item-body i1) (lr1-item-body i2))
+	 (< (lr1-item-la i1) (lr1-item-la i2)))))
+	       
+	
+
+
 (declaim (inline (item-lhs item-rhs item-pre item-suc item-next item= item<)))
 
 (defun shift-item (item)
@@ -294,6 +308,8 @@
      (item-rule item)
      (+ (item-position item) 1))))
 
+
+
 (defun cg-print-item (cg item &key (stream t))
   (format stream "~S -> ~{~S~^ ~} .. ~{~S~^ ~}"
 	  (cg-symbol cg (item-lhs item))
@@ -301,35 +317,6 @@
 	  (mapcar #'(lambda (x) (cg-symbol cg x)) (item-suc item))))
 
 
-(defstruct (kernel
-	    (:constructor make-kernel-base))
-  (items :type list)
-  (gotos :type list))
-
-(defun make-kernel (&key items gotos)
-  (make-kernel-base :items (sort items #'item<) :gotos gotos))
-
-(defun kernel= (k1 k2)
-  (declare (optimize (speed 3) (space 0)))
-  (declare (type kernel k1 k2))
-  (or (eq k1 k2)
-      (do* ((l1 (kernel-items k1) (cdr l1)) (l2 (kernel-items k2) (cdr l2))
-	    (x (car l1) (car l1)) (y (car l2) (car l2)))
-	   ((or (null l1) (null l2)) (eq l1 l2))
-	(unless (item= x y) (return nil)))))
-
-
-(defun cg-print-kernel (cg kernel &key (stream t))
-  (format stream "~{[~a]~%~}~{~a~^~%~}"
-	  (mapcar #'(lambda (x) (cg-print-item cg x :stream nil)) (kernel-items kernel))
-	  (mapcar #'(lambda (x) (cons (cg-symbol cg (car x)) (cdr x))) (kernel-gotos kernel))
-	  ))
-
-(defun cg-print-all-kernel (cg kernel-array &key (stream t))
-  (let ((n (length kernel-array)))
-    (dotimes (i n)
-      (format stream "~%" i)
-      (cg-print-kernel cg (aref kernel-array i) :stream stream))))
 
 (defun cg-first-symbols (cg n)
   (unless (cg-first-symbols-array cg)
@@ -445,17 +432,10 @@
 	  (setf (aref state-array (cdr s-n)) (car s-n)))))))
 
 
-;; Kernel of GOTO(I,X)
-
 ;; ================================
 ;;  DeRemer
 ;; TODO: OPTIMIZATION
 
-(defun get-goto-array (kernel-array)
-  (let* ((n (length kernel-array))
-	 (ga (make-array n :initial-element nil)))
-    (dotimes (i n ga)
-      (setf (aref ga i) (kernel-gotos (aref kernel-array i))))))
 
 (defstruct (relation
 	    (:constructor make-relation (rels test)))
@@ -656,9 +636,18 @@
 ;; 
 
 (defstruct (lalr1-item
-	    (:constructor make-lalr1-item (body la-set)))
+	    (:constructor make-lalr1-item-base (body la-set)))
   (body :type item)
   (la-set nil :type list))
+
+(defun make-lalr1-item (body la-set)
+  (make-lalr1-item-base body (sort la-set #'<)))
+
+(defun lalr1-item= (i1 i2)
+  (declare (type lalr1-item i1 i2))
+  (or (eq i1 i2)
+      (and (item= (lalr1-item-body i1) (lalr1-item-body i2))
+	   (set-eq (lalr1-item-la-set i1) (lalr1-item-la-set i2)))))
 
 (defun cg-print-lalr1-item (cg lalr1-item &optional (stream t))
   (format stream "[~a ;; ~{~S~^,~}]"
@@ -666,8 +655,11 @@
 	  (mapcar #'(lambda (x) (cg-symbol cg x)) (lalr1-item-la-set lalr1-item))))
 
 (defstruct (lalr1-state
-	    (:constructor make-lalr1-state (items gotos)))
+	    (:constructor make-lalr1-state-base (items gotos)))
   items gotos)
+
+(defun make-lalr1-state (items gotos)
+  (make-lalr1-state-base (sort items #'item< :key #'lalr1-item-body) (sort gotos #'< :key #'car)))
 
 (defun cg-print-lalr1-state (cg lalr1-state &optional (stream t))
   (format stream "~{~a~%~}~{~S~^~%~}"
@@ -686,7 +678,7 @@
   (dotimes (i (length (lalr1-parser-state-array lalr1-parser)))
     (format stream ":state(~a):~%~a~%" i (cg-print-lalr1-state (lalr1-parser-grammar lalr1-parser) (lalr1-parser-state lalr1-parser i) nil))))
 
-(defun lalr1-parse-table (cg)
+(defun deremer-lalr1-parser (cg)
   (let* ((parser (make-parser cg (lr0-parse-table cg)))
 	 (n (length (parser-state-array parser)))
 	 (lalr1-state-array (make-array n)))
@@ -733,9 +725,241 @@
 		      (reverse str)))))))
 
 
+;; 
+;; Dragon Book's Method
+;; 
+
+(defun items->kernel (items)
+  (filter #'(lambda (item)
+	      (or (< 0 (item-position item))
+		  (= 0 (rule-id (item-rule item)))))
+	  items))
+
+(defstruct (lr1-item
+	    (:constructor make-lr1-item (body la)))
+  (body :type item)
+  la)
+
+(defun lr1-item= (i1 i2)
+  (declare (type lr1-item i1 i2))
+  (or (eq i1 i2)
+      (and (item= (lr1-item-body i1) (lr1-item-body i2))
+	   (= (lr1-item-la i1) (lr1-item-la i2)))))
+(declaim (inline lr1-item))
+
+(defun lr1-closure (cg lr1-items )
+  (declare (optimize (speed 3) (space 0)))
+  (let ((result lr1-items))
+    (labels ((f (items)
+	       (when items 
+		 (dolist (lr1-item items)
+		   (let ((item (lr1-item-body lr1-item)))
+		     (unless (or (item-suc-null item) (cg-terminal-p cg (item-next item)))
+		       (dolist (rule (cg-rules cg))
+			 (when (= (item-next item) (rule-lhs rule))
+			   (let* ((new-lr1-items (mapcar #'(lambda (x) (make-lr1-item (make-item rule 0) x))
+							 (cg-sequence-first cg (append (rest (item-suc item)) (list (lr1-item-la lr1-item))))))
+				  (added nil))
+			     (setf added (set-difference new-lr1-items result :test #'lr1-item=))
+			     (setf result (append added result))
+			     ;; (format t  "~a:~a~%" result added)
+			     (f added))))))))))
+      (f lr1-items))
+    result))
 
 
-;; grammar samples
+(defun db-lalr1-parser (cg)
+  (let* ((parser (make-parser cg (lr0-parse-table cg)))
+	 (num (length (parser-state-array parser)))
+	 (propagate-symbol (+ (cg-num cg) 1))
+	 (propagate-array (make-array num))
+	 (la-set-array (make-array num))
+	 (changed t))
+    (dotimes (i num)
+      (setf (aref propagate-array i) (make-hash-table :test 'item=)
+	    (aref la-set-array i) (make-hash-table :test 'item=)))
+    ;; Determine Look-Ahead Propagation
+    (dotimes (i num)
+      ;; each item in kernel of state I
+      (dolist (item (items->kernel (state-items (parser-state parser i))))
+	;; all GOTO(I,X)
+	(let ((gotos (state-gotos (parser-state parser i))))
+	  ;; calculate propagation for all item B -> a.Xb s.t. X is non-terminal
+	  (dolist (lr1-item (lr1-closure cg (list (make-lr1-item item propagate-symbol))))
+	    (let ((body (lr1-item-body lr1-item)))
+	      (when (and (not (item-suc-null body))
+			 (assoc (item-next body) gotos :test #'=))
+		(let ((propagate-ht (aref propagate-array (cdr (assoc (item-next body) gotos :test #'=))))
+		      (shifted-item (shift-item body)))
+		  (if (= propagate-symbol (lr1-item-la lr1-item))
+		      ;; lookahead propagate from item in state i
+		      (push (cons i item) (gethash shifted-item propagate-ht))
+		      ;; lookahead is generated spontaneously
+		      (push (lr1-item-la lr1-item) (gethash shifted-item propagate-ht))))))))
+	))
+    (format t "Propagation start")
+    ;; Propagation
+    (loop while changed
+	  do (setf changed nil)
+	     (dotimes (i num)
+	       (let ((propagate-ht (aref propagate-array i)))
+		 ;; for item in state i
+		 (dolist (item (state-items (parser-state parser i)))
+		   (let ((la-set-ht (aref la-set-array i)))
+		     (dolist (x (gethash item propagate-ht nil))
+		       (cond ((numberp x)
+			      (unless (member x (gethash item la-set-ht nil) :test #'=)
+				(push x (gethash item la-set-ht))
+				(setf changed t)))
+			     ((consp x)
+			      (let ((dif (set-difference (gethash (cdr x) (aref la-set-array (car x)))
+							 (gethash item la-set-ht nil) :test #'=)))
+				(when dif
+				  (setf (gethash item la-set-ht) (append dif (gethash item la-set-ht))
+					changed t))))
+			     (t nil))))))))
+    (let ((lalr1-state-array (make-array num)))
+      (dotimes (i num)
+	(setf
+	 (aref lalr1-state-array i)
+	 (make-lalr1-state
+	  (lalr1-closure cg (mapcar #'(lambda (item) (make-lalr1-item item (gethash item (aref la-set-array i))))
+				    (items->kernel (state-items (parser-state parser i)))))
+	  (state-gotos (parser-state parser i)))
+	 ))
+      lalr1-state-array)))
+
+
+(defun lalr1-closure (cg items)
+  (declare (optimize (speed 3) (space 0)))
+  (let ((rules (cg-rules cg))
+	(looked-symbols nil))
+    (dolist (lalr1-item items)
+      (let ((body (lalr1-item-body lalr1-item)))
+	(unless (item-suc-null body)
+	  (let ((X (item-next body)))
+	    (when (and (numberp X)
+		       (not (member X looked-symbols))
+		       (cg-non-terminal-p cg X))
+	      (push X looked-symbols)
+	      (let ((fs (first-symbols cg X)))
+		(dolist (rule rules)
+		  (push (rule-lhs rule) looked-symbols)
+		  (when (member (rule-lhs rule) fs)
+		    (push (make-lalr1-item (make-item rule 0) (lalr1-item-la-set lalr1-item)) items)))))))))
+    items))
+
+;; (defun make-lalr1-items (cg)
+;;   (let* (
+;; 	 ;; step 1 and 2
+;; 	 (all-items (lr0-parse-table cg))
+;; 	 ;; step 3
+;; 	 (all-kernels 
+;; 	   (mapcar #'(lambda (x)
+;; 		       (cons (make-kernels (car x)) (cdr x))) ; magic-number: 0
+;; 		   (car all-items)))
+;; 	 (result nil)
+;; 	 (all-lalr1-kernels nil)
+;; 	 ;; (not-in-symbol (gensym))
+;; 	 (ht-from (make-hash-table :test #'equal))
+;; 	 (ht-spon (make-hash-table :test #'equal)))
+;;     ;; step 4
+;;     (setf (gethash
+;;     	   (cons 0 (list 0 () (list (cg-start cg) (cg-num cg))))
+;;     	   ht-spon)
+;; 	  nil)
+;;     (dolist (kernels-and-num all-kernels)
+;;       (let ((kernels (car kernels-and-num))
+;; 	    (num (cdr kernels-and-num))
+;; 	    (tmp nil))
+;; 	(dotimes (symb (cg-num cg))
+;; 	  (let ((dl (determine-lookaheads cg kernels num symb (cdr all-items) ht-from ht-spon (+ (cg-num cg) 1))))
+;; 	    (when dl (push dl tmp))))
+;; 	(when tmp (push (cons kernels tmp) result))))
+;;     ;; (format t "~a~%" result)
+;;     ;; step 5.
+;;     (let ((ht-lookaheads (make-hash-table :test #'equal)))
+;;       ;; spontaneously lookaheads
+;;       (dolist (kernels-and-num all-kernels)
+;; 	(let ((kernels (car kernels-and-num))
+;; 	      (num (cdr kernels-and-num)))
+;; 	  (dolist (kern kernels)
+;; 	    (setf (gethash (cons num kern) ht-lookaheads)
+;; 		  (gethash (cons num kern) ht-spon)))))
+;;       ;; lookaheads' propagation
+;;       (let ((changed t))
+;; 	(loop
+;; 	  while changed
+;; 	  do (setf changed nil)
+;; 	     (dolist (kernels-and-num all-kernels)
+;; 	       (let* ((kernels (car kernels-and-num))
+;; 		      (num (cdr kernels-and-num)))
+;; 		 (dolist (kernel kernels)
+;; 		   (let ((old (copy-list (gethash (cons num kernel) ht-lookaheads))))
+;; 		     (dolist (from (remove-if #'(lambda (x) (equal (cons num kernel) x)) (gethash (cons num kernel) ht-from)))
+;; 		       (setf (gethash (cons num kernel) ht-lookaheads)
+;; 			     (union (gethash (cons num kernel) ht-lookaheads)
+;; 				    (gethash from ht-lookaheads)
+;; 				    :test #'equal)))
+;; 		     (unless (set-eq old (gethash (cons num kernel) ht-lookaheads))
+;; 		       (setf changed t))))))))
+;;      ;; make lalr1-kernels
+;;       ;; (format t "******~%")
+;;       ;; (format t "~a~%" all-kernels)
+;;       ;; (format t "******~%")
+;;       (dolist (kernels-and-num all-kernels all-lalr1-kernels)
+;; 	(let ((kernels (car kernels-and-num))
+;; 	      (num (cdr kernels-and-num))
+;; 	      (lalr1-kernels nil))
+;; 	  (dolist (kernel kernels)
+;; 	    (push (cons kernel (gethash (cons num kernel) ht-lookaheads)) lalr1-kernels))
+;; 	  (push (cons lalr1-kernels num) all-lalr1-kernels)))
+;;       ;; step 6. from kernel to state
+;;       ;; (format t "~a~%" all-lalr1-kernels)
+;;       (let ((l (mapcar
+;; 		#'(lambda (x)
+;; 		    (cons 
+;; 		     (lalr1-state-compress (lr1-closure cg (car x)))
+;; 		     (cdr x)))
+;; 		all-lalr1-kernels)))
+;; 	(cons l (cdr all-items))))))
+
+;; (defun lalr1-state-compress (state)
+;;   (sort
+;;    (foldl '()
+;; 	  #'(lambda (items item)
+;; 	      (if items
+;; 		  (let ((sep-ls (separate
+;; 				 #'(lambda (x) (equal (car item) (car x)))
+;; 				 items)))
+;; 		    (cons (cons (car item)
+;; 				(union (cdr item) (cdaar sep-ls)))
+;; 			  (cdr sep-ls)))
+;; 		  (list item)))
+;; 	  state)
+;;    #'(lambda (x y) (< (caar x) (caar y))))
+;;   )
+
+;; (defun separate (predicate list &key (key #'identity))
+;;   (labels ((f (x y)
+;; 	     (if (funcall predicate (funcall key y))
+;; 		 (cons (cons y (car x)) (cdr x))
+;; 		 (cons (car x) (cons y (cdr x))))))
+;;     (foldl (cons () ()) #'f list)))
+
+
+
+
+
+
+
+
+
+
+
+
+
+;; Grammar samples
 (defparameter *g1*
   (make-grammar "E"
              '(("E" "E" "+" "T") ("E" "T") ("T" "T" "*" "F") ("T" "F")
