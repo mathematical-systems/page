@@ -19,9 +19,7 @@
 ;; * lhs -> rhs
 (defstruct (rule
 	    (:constructor make-rule (lhs rhs)))
-  (id nil :type number)
-  (lhs nil)
-  (rhs nil))
+  id lhs rhs)
 
 (declaim (inline rule=))
 (defun rule= (r1 r2)
@@ -42,13 +40,7 @@
 	    (:conc-name cg-)
 	    (:constructor make-canonical-grammar
 	      (start rules nt-num num sym-array sym-alist unknown-symbol)))
-  (start :type number)
-  (rules :type list)
-  (nt-num :type number)
-  (num :type number)
-  (sym-array :type array)
-  (sym-alist :type list)
-  unknown-symbol
+  start rules nt-num num sym-array sym-alist unknown-symbol
   (nullable-array nil)			; bit array
   (first-array nil)
   (follow-array nil)
@@ -262,8 +254,7 @@
 ;; 
 (defstruct (item 
 	    (:constructor make-item (rule position)))
-  (rule :type rule)
-  (position :type number))
+  rule position)
 
 (defun item-lhs (item) (rule-lhs (item-rule item)))
 (defun item-rhs (item) (declare (type item item)) (rule-rhs (item-rule item)))
@@ -342,8 +333,8 @@
 ;; 
 (defstruct (state
 	    (:constructor make-state-base))
-  (items :type list)
-  (gotos :type list))
+  (items nil :type list)
+  (gotos nil :type list))
 
 (defun make-state (&key items gotos)
   (make-state-base :items (sort items #'item<) :gotos gotos))
@@ -439,8 +430,7 @@
 
 (defstruct (relation
 	    (:constructor make-relation (rels test)))
-  (rels)
-  (test :type function))
+  rels test)
 
 (defstruct (parser
 	    (:constructor make-parser (grammar state-array)))
@@ -452,7 +442,7 @@
   (read-set nil)
   (includes nil :type relation)
   (follow-set)
-  (lookback :type relation)
+  (lookback nil :type relation)
   (lookahead-set)
   )
 
@@ -637,8 +627,7 @@
 
 (defstruct (lalr1-item
 	    (:constructor make-lalr1-item-base (body la-set)))
-  (body :type item)
-  (la-set nil :type list))
+  body la-set)
 
 (defun make-lalr1-item (body la-set)
   (make-lalr1-item-base body (sort la-set #'<)))
@@ -737,8 +726,7 @@
 
 (defstruct (lr1-item
 	    (:constructor make-lr1-item (body la)))
-  (body :type item)
-  la)
+  body la)
 
 (defun lr1-item= (i1 i2)
   (declare (type lr1-item i1 i2))
