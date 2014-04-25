@@ -477,7 +477,7 @@
       (let ((k (parser-state parser i)))
 	(dolist (transition (state-gotos k))
 	  (setf (gethash (cons i (car transition)) dr-set)
-		(remove-if-not #'(lambda (x) (cg-terminal-p (parser-grammar parser) x))
+		(filter #'(lambda (x) (cg-terminal-p (parser-grammar parser) x))
 			       (mapcar #'car (state-gotos (parser-state parser (cdr transition)))))))))
     (setf (parser-direct-read parser) dr-set)))
 
@@ -494,7 +494,7 @@
 	(dolist (transition (state-gotos (parser-state parser i)))
 	  (setf (gethash (cons i (car transition)) reads)
 		(mapcar #'(lambda (x) (cons (cdr transition) x))
-			(remove-if-not #'(lambda (x) (cg-nullable (parser-grammar parser) x))
+			(filter #'(lambda (x) (cg-nullable (parser-grammar parser) x))
 				       (mapcar #'car (state-gotos (parser-state parser (cdr transition))))))))))
     (setf (parser-reads parser) (make-relation reads #'(lambda (x y) (and (= (car x) (car y)) (= (cdr x) (cdr y))))))))
 
