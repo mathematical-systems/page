@@ -323,10 +323,18 @@
 	       (setf result (list n))
 	       (dolist (rule (cg-rules cg))
 		 (when (and (= n (rule-lhs rule)) (rule-rhs rule))
-		   (setf result (union result (first-symbols cg (first (rule-rhs rule)) (cons n visited)))))))
+		   (setf result (union (sequence-first-symbols cg (rule-rhs rule) (cons n visited)) result)))))
 	     (unless visited (setf (aref (cg-first-symbols-array cg) n) result))
 	     result))))
 
+(defun sequence-first-symbols (cg sequence &optional (visited nil))
+  (declare (optimize (speed 3) (space 0)))
+  (if sequence
+      (let ((fs (first-symbols cg (first sequence) visited)))
+	(if (cg-nullable cg (first sequence))
+	    (union fs (sequence-first-symbols cg (rest sequence) visited))
+	    fs))
+      ()))
 
 ;; 
 ;; state
@@ -345,7 +353,7 @@
   (or (eq k1 k2)
       (do* ((l1 (state-items k1) (cdr l1)) (l2 (state-items k2) (cdr l2))
 	    (x (car l1) (car l1)) (y (car l2) (car l2)))
-	   ((or (null l1) (null l2)) (eq l1 l2))
+	   ((or (eq l1 l2) (null l1) (null l2)) (eq l1 l2))
 	(unless (item= x y) (return nil)))))
 
 
@@ -361,10 +369,37 @@
       (format stream "~%" i)
       (cg-print-state cg (aref state-array i) :stream stream))))
 
+;; (defun lr0-closure (cg state)
+;; ;  (declare (optimize (speed 3) (space 0)))
+;;   (let ((rules (cg-rules cg))
+;; 	(looked-symbols nil)
+;; 	(changed t))
+;;     (labels ((f (items)
+;; 	       (when items
+;; 		 (let ((added nil))
+;; 		   (dolist (item state)
+;; 		     (let ((X (item-next item)))
+;; 		       (when (and (numberp X)
+;; 				  (not (member X looked-symbols :test #'=))
+;; 				  (cg-non-terminal-p cg X))
+;; 			 (push X looked-symbols)
+;; 			 (setf changed t)
+;; 			 (dolist (rule rules)
+;; 			   (when (= X (rule-lhs rule))
+;; 			     (push (make-item rule 0) added)
+;; 			     (push (make-item rule 0) state))))))
+;; 		   (f added)))))
+;;       (f state)
+;;       state)))
+
 (defun lr0-closure (cg items)
   (declare (optimize (speed 3) (space 0)))
-  (let ((rules (cg-rules cg))
-	(looked-symbols nil))
+  (let* ((0-item-rule-ids nil)
+	 (rules (cg-rules cg))
+	 (looked-symbols nil))
+    (dolist (item items)
+      (when (= 0 (item-position item))
+	(pushnew (rule-id (item-rule item)) 0-item-rule-ids :test #'=)))
     (dolist (item items)
       (unless (item-suc-null item)
 	(let ((X (item-next item)))
@@ -374,8 +409,10 @@
 	    (push X looked-symbols)
 	    (let ((fs (first-symbols cg X)))
 	      (dolist (rule rules)
-		(push (rule-lhs rule) looked-symbols)
-		(when (member (rule-lhs rule) fs)
+		(when (and (member (rule-lhs rule) fs)
+			   (not (member (rule-id rule) 0-item-rule-ids)))
+		  (push (rule-lhs rule) looked-symbols)
+		  (push (rule-id rule) 0-item-rule-ids)
 		  (push (make-item rule 0) items))))))))
     items))
 
@@ -548,23 +585,32 @@
     (setf (parser-read-set parser) (alg-digraph nt-transitions (parser-reads parser) (parser-direct-read parser)))))
 
 (defun rev-traverse (parser starts sequence)
-  (declare (optimize (speed 3) (space 0)))
-  (if sequence
-      (let ((preds nil))
-	(dotimes (n (length (parser-state-array parser)))
-	  (let ((b nil))
-	  (loop until b
-		for x in (state-gotos (parser-state parser n))
-		do (when (and (= (car x) (first sequence)) (member (cdr x) starts))
-		     (push n preds)
-		     (setf b t)))))
-	  ;; (when (intersection (mapcar #'(lambda (x) (cons (first sequence) x)) starts)
-	  ;; 		      (state-gotos (parser-state parser n)) :test #'equal)
-	  ;; (when (intersection starts
-	  ;; 		      (mapcar #'cdr (filter #'(lambda (x) (= (first sequence) (car x))) (state-gotos (parser-state parser n)))) :test #'=)
-	    ;; (push n preds)))
-	(rev-traverse parser preds (rest sequence)))
-      starts))
+  (declare (optimize (speed 3) (safety 0) (space 0)))
+  (let ((s starts)
+	(p nil))
+    (declare (list s p))
+    (loop for x in sequence
+	  do (dotimes (n (length (parser-state-array parser)))
+	       (let ((b nil))
+		 (loop until b
+		       for (symbol . next) in (state-gotos (parser-state parser n))
+		       do (when (and (= symbol x) (member next s :test #'=))
+			    (push n p)
+			    (setf b t)))))
+	     (setf s p p nil))
+    s))
+  ;; (if sequence
+  ;;     (let ((preds nil))
+  ;; 	(dotimes (n (length (parser-state-array parser)))
+  ;; 	  (let ((b nil))
+  ;; 	    (loop until b
+  ;; 		  for x in (state-gotos (parser-state parser n))
+  ;; 		  do (when (and (= (car x) (first sequence)) (member (cdr x) starts :test #'=))
+  ;; 		       (push n preds)
+  ;; 		       (setf b t)))))
+  ;; 	(rev-traverse parser preds (rest sequence)))
+  ;;     starts))
+
 
 (defun calc-includes (parser)
   (let* ((cg (parser-grammar parser))
