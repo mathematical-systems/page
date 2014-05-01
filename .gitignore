@@ -1,0 +1,8 @@
+.*
+*.fasl
+*~
+*.output
+*.dot
+*.svg
+*.png
+!.gitignore
