@@ -15,8 +15,6 @@
 ;; --------------------------------
 ;;  rule
 ;; 
-;; * id : to distinguish rules
-;; * lhs -> rhs
 (defstruct (rule
 	    (:constructor make-rule (lhs rhs)))
   (id 0 :type fixnum) (lhs 0 :type fixnum) rhs)
@@ -28,6 +26,7 @@
 ;  (= (rule-id r1) (rule-id r2)))
 
 (defun rule< (r1 r2)
+  (declare (type rule r1 r2))
   (< (rule-id r1) (rule-id r2)))
 (declaim (inline rule<))
 
@@ -48,7 +47,7 @@
   )
 
 
-(defun canonicalize (grammar &key start eof (unknown-symbol ""))
+(defun canonicalize (grammar &key (start "$accept") (eof "$eof") (unknown-symbol ""))
   (let* ((ntset (remove-duplicates (mapcar #'car (grammar-rules grammar)) :test #'equal))
 	 (tset (set-difference (remove-duplicates (apply #'append (mapcar #'cdr (grammar-rules grammar))) :test #'equal) ntset :test #'equal))
 	 (symbol-alist nil)
@@ -63,7 +62,8 @@
     (loop for symbol in tset
 	  do (push (cons symbol num) symbol-alist)
 	     (incf num))
-    (push (cons unknown-symbol num) symbol-alist)
+    (push (cons eof num) symbol-alist)
+    (push (cons unknown-symbol (+ num 1)) symbol-alist)
     ;; make symbol-array and canonical-grammar
     (let ((symbol-array (make-array (+ num 2) :initial-element nil))
 	  (rules (cons (make-rule 0 (list (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal)) num))
@@ -255,10 +255,10 @@
 	    (:constructor make-item (rule position)))
   rule (position 0 :type fixnum))
 
-(declaim (inline item-rule item-lhs item-rhs item-pre item-suc item-next item= item<))
+(declaim (inline item-rule item-lhs item-rhs item-pre item-suc  item-next item= item<))
 
 (defun item-lhs (item) (rule-lhs (item-rule item)))
-(defun item-rhs (item) (rule-rhs (item-rule item)))
+(defun item-rhs (item) (declare (optimize (speed 3) (safety 0) (space 0))) (rule-rhs (item-rule item)))
 (defun item-pre (item) (take (item-position item) (item-rhs item)))
 (defun item-suc (item) (drop (item-position item) (item-rhs item)))
 (defun item-suc-null (item)
@@ -266,7 +266,6 @@
   (= (item-position item) (length (the list (item-rhs item)))))
 (defun item-next (item)
   (declare (type item item))
-  (declare (optimize (speed 3) (space 0)))
   (nth (item-position item) (item-rhs item)))
 
 (defun item= (i1 i2)
@@ -283,11 +282,7 @@
 	 (< (item-position i1) (item-position i2)))
 	(t nil)))
 
-(defun lr1-item< (i1 i2)
-  (cond ((eq i1 i2) nil)
-	((item< (lr1-item-body i1) (lr1-item-body i2)) t)
-	((item= (lr1-item-body i1) (lr1-item-body i2))
-	 (< (lr1-item-la i1) (lr1-item-la i2)))))
+
 
 
 (defun shift-item (item)
@@ -313,7 +308,6 @@
 
 (defun first-symbols (cg n &optional (visited nil))
   (declare (type fixnum n))
-  (declare (optimize (speed 3) (space 0)))
   (cond ((cg-terminal-p cg n) (list n))
 	((member n visited) nil)
 	(t (let ((result (cg-first-symbols cg n)))
@@ -345,10 +339,11 @@
   (comefroms nil :type list))
 
 (defun make-state (&key items gotos comefroms)
+  (declare (optimize (speed 3) (safety 0) (space 0)))
   (make-state-base :items (sort items #'item<) :gotos gotos :comefroms comefroms))
 
 (defun item-set= (k1 k2)
-  (declare (optimize (speed 3) (space 0)))
+  (declare (optimize (speed 3) (safety 0) (space 0)))
   (declare (list k1 k2))
   (or (eq k1 k2)
       (do* ((l1 k1 (cdr l1)) (l2 k2 (cdr l2))
@@ -362,29 +357,6 @@
 	  (mapcar #'(lambda (x) (cg-print-item cg x :stream nil)) (state-items state))
 	  (mapcar #'(lambda (x) (cons (cg-symbol cg (car x)) (cdr x))) (state-gotos state))
 	  ))
-
-;; (defun lr0-closure (cg state)
-;; ;  (declare (optimize (speed 3) (space 0)))
-;;   (let ((rules (cg-rules cg))
-;; 	(looked-symbols nil)
-;; 	(changed t))
-;;     (labels ((f (items)
-;; 	       (when items
-;; 		 (let ((added nil))
-;; 		   (dolist (item state)
-;; 		     (let ((X (item-next item)))
-;; 		       (when (and (numberp X)
-;; 				  (not (member X looked-symbols))
-;; 				  (cg-non-terminal-p cg X))
-;; 			 (push X looked-symbols)
-;; 			 (setf changed t)
-;; 			 (dolist (rule rules)
-;; 			   (when (= X (rule-lhs rule))
-;; 			     (push (make-item rule 0) added)
-;; 			     (push (make-item rule 0) state))))))
-;; 		   (f added)))))
-;;       (f state)
-;;       state)))
 
 ;; (defun lr0-closure (cg items)
 ;;   (declare (optimize (speed 3) (space 0)))
@@ -412,51 +384,24 @@
 ;;     items))
 
 (defun lr0-closure (cg items)
-  (declare (optimize (speed 3) (space 0)))
+  (declare (optimize (speed 3) (safety 0) (space 0)))
   (let* ((rules (cg-rules cg))
-	 (0-item-rule-ids nil)
 	 (looked-symbols nil))
-    (dolist (item items)
-      (when (= 0 (item-position item))
-    	(pushnew (rule-id (item-rule item)) 0-item-rule-ids)))
-    (dolist (item items)
+    (dolist (item items items)
       (unless (item-suc-null item)
 	(let ((X (item-next item)))
 	  (declare (type fixnum X))
 	  (when (and (cg-non-terminal-p cg X)
 		     (not (member X looked-symbols)))
-	    (push X looked-symbols)
 	    (let ((fs (first-symbols cg X)))
 	      (dolist (rule rules)
-		(when (and (member (rule-lhs rule) fs)
-			   (not (member (rule-id rule) 0-item-rule-ids)))
-		  (push (rule-lhs rule) looked-symbols)
-		  (push (rule-id rule) 0-item-rule-ids)
-		  (pushnew (make-item rule 0) items ))
-		))))))
-    items))
-
-
-;; (defun lr0-goto (cg items symbol)
-;;   (let ((result nil)
-;; 	(looked-symbols nil))
-;;     (dolist (item items result)
-;;       (unless (item-suc-null item)
-;; 	(let* ((X (item-next item))
-;; 	       (fs (first-symbols cg X)))
-;; 	  (when (= X symbol)
-;; 	    (push (shift-item item) result))
-;; 	  (unless (member X looked-symbols)
-;; 	    (push X looked-symbols)
-;; 	    (dolist (rule (cg-rules cg))
-;; 	      (when (and (rule-rhs rule)
-;; 			 (= symbol (first (rule-rhs rule)))
-;; 			 (member (rule-lhs rule) fs :test #'=))
-;; 		(push (rule-lhs rule) looked-symbols)
-;; 		(pushnew (make-item rule 1) result :test #'item=)))))))))
-	    
+		(when (and (not (member (rule-lhs rule) looked-symbols))
+			   (member (rule-lhs rule) fs :test #'=))
+		  (push (make-item rule 0) items)))
+	      (setf looked-symbols (append fs looked-symbols)))))))))
 
 (defun lr0-goto (cg items symbol)
+  (declare (optimize (speed 3) (safety 0) (space 0)))
   (let ((base-items (remove-if-not
 		     #'(lambda (item) (and (not (item-suc-null item))
 					   (= symbol (item-next item))))
@@ -469,8 +414,6 @@
 ;;     (lambda (x) (sxhash (coerce x 'state))))
 
 (defun lr0-parse-table (cg)
-  (declare (optimize (speed 3) (safety 0) (space 0)))
-  ;; (let* ((init-items (list (make-item (first (cg-rules cg)) 0)))
   (let* ((init-items (lr0-closure cg (list (make-item (first (cg-rules cg)) 0))))
 	 (items-ht (make-hash-table :test 'item-set=))
 	 (gotos-ht (make-hash-table :test 'item-set=))
@@ -485,8 +428,7 @@
 		   (labels ((g (x items)
 			      (let ((goto (sort (lr0-goto cg items x) #'item<)))
 				(when goto
-				  (let* (;(st (make-state :items goto :gotos nil :comefroms nil))
-					 (next (gethash goto items-ht nil)))
+				  (let ((next (gethash goto items-ht nil)))
 				    (unless next
 				      (the fixnum (incf num))
 				      (setf next num)
@@ -601,11 +543,11 @@
 	 (depth 0)
 	 (nar (make-hash-table :test #'equal)))
     (declare (type fixnum depth))
-    (declare (optimize (speed 3) (safety 0) (space 0)))
+    ;; (declare (optimize (speed 3) (safety 0) (space 0)))
     ;; (declaim (inline test))
     ;; (dolist (node node-list) (push (cons node nil) result-f))
     (labels ((traverse (x)
-	       (declare (optimize (speed 3) (space 0)))
+	       (declare (optimize (speed 3) (safety 0) (space 0)))
 	       (push x stack)
 	       (incf depth)
 	       (setf (gethash x nar) depth)
@@ -641,7 +583,7 @@
     (setf (parser-read-set parser) (alg-digraph nt-transitions (parser-reads parser) (parser-direct-read parser)))))
 
 (defun rev-traverse (parser starts sequence)
-  (declare (optimize (speed 3) (safety 0) (space 0)))
+  ;; (declare (optimize (speed 3) (safety 0) (space 0)))
   (let ((s starts))
     (declare (list s))
     (loop for x in sequence
@@ -668,10 +610,10 @@
 			    (available (intersection (mapcar #'(lambda (x) (cons x (rule-lhs rule))) starts)
 						     nt-transitions
 						     :test #'equal)))
-		       (if (gethash (cons (car transition) (first rhs)) result nil)
+		       ;; (if (gethash (cons (car transition) (first rhs)) result nil)
 			   (setf (gethash transition result)
-				 (union (gethash transition result nil) available))
-			   (setf (gethash transition result) available))))
+				 (union (gethash transition result nil) available))))
+			   ;; (setf (gethash transition result) available))))
 		   (push (pop rhs) pre)))))
     (setf (parser-includes parser) result)))
 
@@ -781,12 +723,17 @@
 (defun dot-lalr1-parse-table (lalr1-parser &key (name "lalr1") (stream t))
   (let ((cg (lalr1-parser-grammar lalr1-parser)))
     (labels ((f (item)
-	       (format nil "[~a\\ -\\>\\ ・\\ ~{~a~^\\ ~}\\ ,\\ ~{~a~^\\ ~}]"
-		       (cg-symbol cg (item-lhs (lalr1-item-body item)))
-		       (mapcar #'(lambda (x) (cg-symbol cg x)) (item-rhs (lalr1-item-body item)))
-		       (mapcar #'(lambda (x) (cg-symbol cg x)) (lalr1-item-la-set item)))))
+	       (let ((body (lalr1-item-body item)))
+		 (format nil "[~a\\ -\\>\\ ~{~a~^\\ ~}・\\ ~{~a~^\\ ~}\\ ,\\ ~{~a~^\\ ~}]"
+			 (cg-symbol cg (item-lhs body))
+			 (mapcar #'(lambda (x) (cg-symbol cg x)) 
+				 (take (item-position body) (item-rhs body)))
+			 (mapcar #'(lambda (x) (cg-symbol cg x))
+				 (drop (item-position body) (item-rhs body)))
+			 (mapcar #'(lambda (x) (cg-symbol cg x)) 
+			       (lalr1-item-la-set item))))))
       (format stream "~{~a~}"
-	      (cons (format nil "digraph ~a {~%  graph [rankdir = LR];~%" name)
+	      (cons (format nil "digraph ~a {~%" name)
 		    (let ((str nil))
 		      (dotimes (i (lalr1-parser-state-num lalr1-parser))
 			(push (format nil
@@ -809,8 +756,8 @@
   (num 0 :type fixnum))
 
 (defstruct (reduce-action
-	    (:constructor make-reduce-action (id)))
-  (id 0 :type fixnum))
+	    (:constructor make-reduce-action (rule)))
+  rule)
 
 (defstruct accept-action)
 
@@ -823,15 +770,21 @@
     (dotimes (i n)
       (setf (aref action-array i)
 	    (mapcar #'(lambda (p) (cons (car p) (make-shift-action (cdr p)))) (state-gotos (parser-state parser i)))))
-    ;; Reduce and Accept Action
+    ;; Accept Action
+    (pushnew (cons 0 (make-accept-action)) (aref action-array 0))
+    ;; Reduce Accept Action
     (dotimes (i n)
       (dolist (lalr1-item (state-items (parser-state parser i)))
 	(let ((body (lalr1-item-body lalr1-item)))
+	  ;; (when (item= (make-item (first (cg-rules (parser-grammar parser))) 1) body)
+	  ;; 	;; Accept
+	  ;;   (pushnew (cons (cg-num (parser-grammar parser)) (make-accept-action)) (aref action-array i)))
 	  (when (item-suc-null body)
-	    (if (item= (make-item (first (cg-rules (parser-grammar parser))) 1) body)
-		;; Accept
-		(pushnew (cons (cg-num (parser-grammar parser)) (make-accept-action)) (aref action-array i))
-		;; Reduce
+	    ;; Reduce
+	    ;; (if (= 0 (item-lhs body))
+	    ;; 	(pushnew (cons (cg-num (parser-grammar parser)) (make-accept-action)) (aref action-array i))
+	    (if (null (lalr1-item-la-set lalr1-item))
+		(pushnew (cons -1 (make-reduce-action (item-rule body))) (aref action-array i))
 		(dolist (la (lalr1-item-la-set lalr1-item))
 		  (let ((action (assoc la (aref action-array i))))
 		    (cond ((null action)
@@ -847,6 +800,74 @@
 			  (t nil)))))))))
     (list action-array sr-conflict rr-conflict)))
 
+
+(defstruct (configuration
+	    (:constructor make-configuration (states symbols))
+	    (:print-function print-configuration))
+  (states nil :type list)
+  (symbols nil :type list))
+
+(defun print-configuration (configuration stream depth)
+  (if (or (and (numberp *print-level*) (>= depth *print-level*))
+	  (configuration-p configuration))
+      (format stream "[~{~a~^-~a->~}]~{~a~}~%"
+	      (reverse (configuration-states configuration))
+	      (configuration-symbols configuration))
+      (write configuration :stream stream)))
+
+(defun p-apply (sequence f predicate)
+  (let ((result nil))
+    (do* ((l sequence (rest l)) (x (car l) (car l)) (n 0 (incf n)))
+	 ((null l) (reverse result))
+      (push (if (funcall predicate n) (funcall f x) x) result))))
+    
+
+(defun cg-print-configuration (cg configuration stream)
+  (format stream "[~{~a~^ -- ~a -> ~}]~{~a~^ ~}~%"
+	  (p-apply (reverse (configuration-states configuration)) #'(lambda (x) (cg-symbol cg x)) #'oddp)
+	  (mapcar #'(lambda (x) (cg-symbol cg x)) (configuration-symbols configuration))))
+
+
+(defun parse (parser sequence &key (with-eof nil) (dump nil))
+  (let* ((action-array (first (parser-check parser)))
+	 (input (mapcar #'(lambda (symbol) (cdr (assoc symbol (cg-sym-alist (parser-grammar parser)) :test #'equal))) sequence))
+	 (conf (make-configuration
+		(list 0) 
+		(if with-eof input (append input (list (cg-num (parser-grammar parser)))))))
+	 (symbol-stack nil)
+	 (cg (parser-grammar parser))
+	 (parsing t)
+	 (result nil))
+    (loop while parsing
+	  do (let* ((state (first (configuration-states conf)))
+		    (symbol (or (first (configuration-symbols conf)) -1))
+		    (action (assoc symbol (aref action-array state) :test #'=)))
+	       ;; TODO: conflict
+	       ;; (format t "[~a,~a | ~a]~%" state symbol action)
+	       (when dump
+		 (format t "~3,,,' @a: ~{~a ~}~{~a~^ ~}~%"
+			 state
+			 (reverse (mapcar #'(lambda (x) (cg-symbol cg x)) symbol-stack))
+			 (mapcar #'(lambda (x) (cg-symbol cg x)) (configuration-symbols conf))))
+	       ;; (cg-print-configuration (parser-grammar parser) conf t)
+	       (cond ((null action)
+		      (setf result "error: no action.~%" parsing nil))
+		     ((shift-action-p (cdr action))
+		      (when dump (format t "Shift~%"))
+		      (push (pop (configuration-symbols conf)) symbol-stack)
+		      (push (shift-action-num (cdr action)) (configuration-states conf)))
+		     ((reduce-action-p (cdr action))
+		      (let ((lhs (rule-lhs (reduce-action-rule (cdr action))))
+			    (rhs (rule-rhs (reduce-action-rule (cdr action)))))
+			(when dump (format t "Reduce by ~a -> ~{~a~^ ~}~%" (cg-symbol cg lhs) (mapcar #'(lambda (x) (cg-symbol cg x)) rhs)))
+			(dotimes (i (length rhs))
+			  (pop symbol-stack)
+			  (pop (configuration-states conf)))
+			(push lhs (configuration-symbols conf))))
+		     ((accept-action-p (cdr action))
+		      (setf result nil parsing nil))
+		     (t (setf result "error: invalid action.~%" parsing nil)))))
+    (if result result (format t "Accept!"))))
 
 
 ;; 
@@ -870,8 +891,14 @@
 	   (= (lr1-item-la i1) (lr1-item-la i2)))))
 (declaim (inline lr1-item))
 
+(defun lr1-item< (i1 i2)
+  (cond ((eq i1 i2) nil)
+	((item< (lr1-item-body i1) (lr1-item-body i2)) t)
+	((item= (lr1-item-body i1) (lr1-item-body i2))
+	 (< (lr1-item-la i1) (lr1-item-la i2)))))
+
 (defun lr1-closure (cg lr1-items )
-  (declare (optimize (speed 3) (space 0)))
+  (declare (optimize (speed 3) (safety 0) (space 0)))
   (let ((result lr1-items))
     (labels ((f (items)
 	       (when items 
@@ -892,6 +919,7 @@
 
 
 (defun db-lalr1-parser (cg)
+  (declare (optimize (speed 3) (safety 0) (space 0)))
   (let* ((parser (make-parser cg (lr0-parse-table cg)))
 	 (num (parser-state-num parser))
 	 (propagate-symbol (+ (cg-num cg) 1))
@@ -1984,3 +2012,190 @@
     (|argument_exp_list| |argument_exp_list| |','| |assignment_exp|)
     (|const| |int_const|) (|const| |char_const|) (|const| |float_const|)
     (|const| |enumeration_const|)))
+
+(defparameter *cbnf-sexp*
+  (make-grammar
+   "translation_unit"
+   '(("translation_unit" "external_decl")
+     ("translation_unit" "translation_unit" "external_decl")
+     ("external_decl" "function_definition") ("external_decl" "decl")
+     ("function_definition" "decl_specs" "declarator" "decl_list"
+      "compound_stat")
+     ("function_definition" "declarator" "decl_list" "compound_stat")
+     ("function_definition" "decl_specs" "declarator" "compound_stat")
+     ("function_definition" "declarator" "compound_stat")
+     ("decl" "decl_specs" "init_declarator_list" "';'")
+     ("decl" "decl_specs" "';'") ("decl_list" "decl")
+     ("decl_list" "decl_list" "decl")
+     ("decl_specs" "storage_class_spec" "decl_specs")
+     ("decl_specs" "storage_class_spec")
+     ("decl_specs" "type_spec" "decl_specs") ("decl_specs" "type_spec")
+     ("decl_specs" "type_qualifier" "decl_specs")
+     ("decl_specs" "type_qualifier") ("storage_class_spec" "'auto'")
+     ("storage_class_spec" "'register'") ("storage_class_spec" "'static'")
+     ("storage_class_spec" "'extern'") ("storage_class_spec" "'typedef'")
+     ("type_spec" "'void'") ("type_spec" "'char'") ("type_spec" "'short'")
+     ("type_spec" "'int'") ("type_spec" "'long'") ("type_spec" "'float'")
+     ("type_spec" "'double'") ("type_spec" "'signed'")
+     ("type_spec" "'unsigned'") ("type_spec" "struct_or_union_spec")
+     ("type_spec" "enum_spec") ("type_spec" "typedef_name")
+     ("type_qualifier" "'const'") ("type_qualifier" "'volatile'")
+     ("struct_or_union_spec" "struct_or_union" "id" "'{'"
+      "struct_decl_list" "'}'")
+     ("struct_or_union_spec" "struct_or_union" "'{'" "struct_decl_list"
+      "'}'")
+     ("struct_or_union_spec" "struct_or_union" "id")
+     ("struct_or_union" "'struct'") ("struct_or_union" "'union'")
+     ("struct_decl_list" "struct_decl")
+     ("struct_decl_list" "struct_decl_list" "struct_decl")
+     ("init_declarator_list" "init_declarator")
+     ("init_declarator_list" "init_declarator_list" "','"
+      "init_declarator")
+     ("init_declarator" "declarator")
+     ("init_declarator" "declarator" "'='" "initializer")
+     ("struct_decl" "spec_qualifier_list" "struct_declarator_list" "';'")
+     ("spec_qualifier_list" "type_spec" "spec_qualifier_list")
+     ("spec_qualifier_list" "type_spec")
+     ("spec_qualifier_list" "type_qualifier" "spec_qualifier_list")
+     ("spec_qualifier_list" "type_qualifier")
+     ("struct_declarator_list" "struct_declarator")
+     ("struct_declarator_list" "struct_declarator_list" "','"
+      "struct_declarator")
+     ("struct_declarator" "declarator")
+     ("struct_declarator" "declarator" "':'" "const_exp")
+     ("struct_declarator" "':'" "const_exp")
+     ("enum_spec" "'enum'" "id" "'{'" "enumerator_list" "'}'")
+     ("enum_spec" "'enum'" "'{'" "enumerator_list" "'}'")
+     ("enum_spec" "'enum'" "id") ("enumerator_list" "enumerator")
+     ("enumerator_list" "enumerator_list" "','" "enumerator")
+     ("enumerator" "id") ("enumerator" "id" "'='" "const_exp")
+     ("declarator" "pointer" "direct_declarator")
+     ("declarator" "direct_declarator") ("direct_declarator" "id")
+     ("direct_declarator" "'('" "declarator" "')'")
+     ("direct_declarator" "direct_declarator" "'['" "const_exp" "']'")
+     ("direct_declarator" "direct_declarator" "'['" "']'")
+     ("direct_declarator" "direct_declarator" "'('" "param_type_list"
+      "')'")
+     ("direct_declarator" "direct_declarator" "'('" "id_list" "')'")
+     ("direct_declarator" "direct_declarator" "'('" "')'")
+     ("pointer" "'*'" "type_qualifier_list") ("pointer" "'*'")
+     ("pointer" "'*'" "type_qualifier_list" "pointer")
+     ("pointer" "'*'" "pointer") ("type_qualifier_list" "type_qualifier")
+     ("type_qualifier_list" "type_qualifier_list" "type_qualifier")
+     ("param_type_list" "param_list")
+     ("param_type_list" "param_list" "','" "'...'")
+     ("param_list" "param_decl")
+     ("param_list" "param_list" "','" "param_decl")
+     ("param_decl" "decl_specs" "declarator")
+     ("param_decl" "decl_specs" "abstract_declarator")
+     ("param_decl" "decl_specs") ("id_list" "id")
+     ("id_list" "id_list" "','" "id") ("initializer" "assignment_exp")
+     ("initializer" "'{'" "initializer_list" "'}'")
+     ("initializer" "'{'" "initializer_list" "','" "'}'")
+     ("initializer_list" "initializer")
+     ("initializer_list" "initializer_list" "','" "initializer")
+     ("type_name" "spec_qualifier_list" "abstract_declarator")
+     ("type_name" "spec_qualifier_list") ("abstract_declarator" "pointer")
+     ("abstract_declarator" "pointer" "direct_abstract_declarator")
+     ("abstract_declarator" "direct_abstract_declarator")
+     ("direct_abstract_declarator" "'('" "abstract_declarator" "')'")
+     ("direct_abstract_declarator" "direct_abstract_declarator" "'['"
+      "const_exp" "']'")
+     ("direct_abstract_declarator" "'['" "const_exp" "']'")
+     ("direct_abstract_declarator" "direct_abstract_declarator" "'['"
+      "']'")
+     ("direct_abstract_declarator" "'['" "']'")
+     ("direct_abstract_declarator" "direct_abstract_declarator" "'('"
+      "param_type_list" "')'")
+     ("direct_abstract_declarator" "'('" "param_type_list" "')'")
+     ("direct_abstract_declarator" "direct_abstract_declarator" "'('"
+      "')'")
+     ("direct_abstract_declarator" "'('" "')'") ("typedef_name" "id")
+     ("stat" "labeled_stat") ("stat" "exp_stat") ("stat" "compound_stat")
+     ("stat" "selection_stat") ("stat" "iteration_stat")
+     ("stat" "jump_stat") ("labeled_stat" "id" "':'" "stat")
+     ("labeled_stat" "'case'" "const_exp" "':'" "stat")
+     ("labeled_stat" "'default'" "':'" "stat") ("exp_stat" "exp" "';'")
+     ("exp_stat" "';'")
+     ("compound_stat" "'{'" "decl_list" "stat_list" "'}'")
+     ("compound_stat" "'{'" "stat_list" "'}'")
+     ("compound_stat" "'{'" "decl_list" "'}'")
+     ("compound_stat" "'{'" "'}'") ("stat_list" "stat")
+     ("stat_list" "stat_list" "stat")
+     ("selection_stat" "'if'" "'('" "exp" "')'" "stat")
+     ("selection_stat" "'if'" "'('" "exp" "')'" "stat" "'else'" "stat")
+     ("selection_stat" "'switch'" "'('" "exp" "')'" "stat")
+     ("iteration_stat" "'while'" "'('" "exp" "')'" "stat")
+     ("iteration_stat" "'do'" "stat" "'while'" "'('" "exp" "')'" "';'")
+     ("iteration_stat" "'for'" "'('" "exp" "';'" "exp" "';'" "exp" "')'"
+      "stat")
+     ("iteration_stat" "'for'" "'('" "exp" "';'" "exp" "';'" "')'" "stat")
+     ("iteration_stat" "'for'" "'('" "exp" "';'" "';'" "exp" "')'" "stat")
+     ("iteration_stat" "'for'" "'('" "exp" "';'" "';'" "')'" "stat")
+     ("iteration_stat" "'for'" "'('" "';'" "exp" "';'" "exp" "')'" "stat")
+     ("iteration_stat" "'for'" "'('" "';'" "exp" "';'" "')'" "stat")
+     ("iteration_stat" "'for'" "'('" "';'" "';'" "exp" "')'" "stat")
+     ("iteration_stat" "'for'" "'('" "';'" "';'" "')'" "stat")
+     ("jump_stat" "'goto'" "id" "';'") ("jump_stat" "'continue'" "';'")
+     ("jump_stat" "'break'" "';'") ("jump_stat" "'return'" "exp" "';'")
+     ("jump_stat" "'return'" "';'") ("exp" "assignment_exp")
+     ("exp" "exp" "','" "assignment_exp")
+     ("assignment_exp" "conditional_exp")
+     ("assignment_exp" "unary_exp" "assignment_operator" "assignment_exp")
+     ("assignment_operator" "'='") ("assignment_operator" "'*='")
+     ("assignment_operator" "'/='") ("assignment_operator" "'%='")
+     ("assignment_operator" "'+='") ("assignment_operator" "'-='")
+     ("assignment_operator" "'<<='") ("assignment_operator" "'>>='")
+     ("assignment_operator" "'&='") ("assignment_operator" "'^='")
+     ("assignment_operator" "'|='") ("conditional_exp" "logical_or_exp")
+     ("conditional_exp" "logical_or_exp" "'?'" "exp" "':'"
+      "conditional_exp")
+     ("const_exp" "conditional_exp") ("logical_or_exp" "logical_and_exp")
+     ("logical_or_exp" "logical_or_exp" "'||'" "logical_and_exp")
+     ("logical_and_exp" "inclusive_or_exp")
+     ("logical_and_exp" "logical_and_exp" "'&&'" "inclusive_or_exp")
+     ("inclusive_or_exp" "exclusive_or_exp")
+     ("inclusive_or_exp" "inclusive_or_exp" "'|'" "exclusive_or_exp")
+     ("exclusive_or_exp" "and_exp")
+     ("exclusive_or_exp" "exclusive_or_exp" "'^'" "and_exp")
+     ("and_exp" "equality_exp") ("and_exp" "and_exp" "'&'" "equality_exp")
+     ("equality_exp" "relational_exp")
+     ("equality_exp" "equality_exp" "'=='" "relational_exp")
+     ("equality_exp" "equality_exp" "'!='" "relational_exp")
+     ("relational_exp" "shift_expression")
+     ("relational_exp" "relational_exp" "'<'" "shift_expression")
+     ("relational_exp" "relational_exp" "'>'" "shift_expression")
+     ("relational_exp" "relational_exp" "'<='" "shift_expression")
+     ("relational_exp" "relational_exp" "'>='" "shift_expression")
+     ("shift_expression" "additive_exp")
+     ("shift_expression" "shift_expression" "'<<'" "additive_exp")
+     ("shift_expression" "shift_expression" "'>>'" "additive_exp")
+     ("additive_exp" "mult_exp")
+     ("additive_exp" "additive_exp" "'+'" "mult_exp")
+     ("additive_exp" "additive_exp" "'-'" "mult_exp")
+     ("mult_exp" "cast_exp") ("mult_exp" "mult_exp" "'*'" "cast_exp")
+     ("mult_exp" "mult_exp" "'/'" "cast_exp")
+     ("mult_exp" "mult_exp" "'%'" "cast_exp") ("cast_exp" "unary_exp")
+     ("cast_exp" "'('" "type_name" "')'" "cast_exp")
+     ("unary_exp" "postfix_exp") ("unary_exp" "'++'" "unary_exp")
+     ("unary_exp" "'--'" "unary_exp")
+     ("unary_exp" "unary_operator" "cast_exp")
+     ("unary_exp" "'sizeof'" "unary_exp")
+     ("unary_exp" "'sizeof'" "'('" "type_name" "')'")
+     ("unary_operator" "'&'") ("unary_operator" "'*'")
+     ("unary_operator" "'+'") ("unary_operator" "'-'")
+     ("unary_operator" "'~'") ("unary_operator" "'!'")
+     ("postfix_exp" "primary_exp")
+     ("postfix_exp" "postfix_exp" "'['" "exp" "']'")
+     ("postfix_exp" "postfix_exp" "'('" "argument_exp_list" "')'")
+     ("postfix_exp" "postfix_exp" "'('" "')'")
+     ("postfix_exp" "postfix_exp" "'.'" "id")
+     ("postfix_exp" "postfix_exp" "'->'" "id")
+     ("postfix_exp" "postfix_exp" "'++'")
+     ("postfix_exp" "postfix_exp" "'--'") ("primary_exp" "id")
+     ("primary_exp" "const") ("primary_exp" "string")
+     ("primary_exp" "'('" "exp" "')'")
+     ("argument_exp_list" "assignment_exp")
+     ("argument_exp_list" "argument_exp_list" "','" "assignment_exp")
+     ("const" "int_const") ("const" "char_const") ("const" "float_const")
+     ("const" "enumeration_const"))))
