@@ -922,7 +922,7 @@
 		      (let ((x (pop (configuration-symbols conf))))
 			    (when (cg-terminal-p cg x)
 			      (push (cg-symbol cg x) val-stack)
-			      (format t ":: ~{~a~^ ~}~%" val-stack)
+			      ;; (format t ":: ~{~a~^ ~}~%" val-stack)
 			      )
 			(push x symbol-stack))
 		      (push (shift-action-num (cdr action)) (configuration-states conf)))
@@ -938,7 +938,7 @@
 			  (pop (configuration-states conf)))
 			(when fun
 			  (let ((vals nil))
-			    (format t ":: ~{~a~^ ~}~%" val-stack)
+			    ;; (when dump (format t ":: ~{~a~^ ~}~%" val-stack))
 			    (dotimes (i (length rhs))
 			      (push (pop val-stack) vals))
 			    (push (apply fun vals) val-stack)
@@ -948,7 +948,7 @@
 		      (setf result nil parsing nil))
 		     (t (setf result "error: invalid action.~%" parsing nil)))))
     (if result result (progn
-			(format t "Accept!" )
+			(when dump (format t "Accept!" ))
 			(first val-stack)))))
 
 ;; 
@@ -966,6 +966,14 @@
 		 (reverse result)))
 	 n))
        ))
+
+(defun dot-tree (tree &optional (stream t))
+  (if tree
+      (destructuring-bind (node . children) tree
+	(format stream "~a [shape=plaintext, label = ~S];~%" (car node) (cdr node))
+	(mapcar #'(lambda (child) (format stream "~a -> ~a;~%" (car node) (caar child))) children)
+	(mapcar #'(lambda (child) (dot-tree child stream)) children))
+      nil))
 
 ;; 
 ;; Dragon Book's Method
@@ -1210,7 +1218,7 @@
 	       (("E" "T") . ,#'(lambda (x) (list "E" x)))
 	       (("T" "T" "*" "F") . ,#'(lambda (x y z) (list y x z)))
 	       (("T" "F") . ,#'(lambda (x) (list "T" x)))
-	       (("F" "(" "E" ")") . ,#'(lambda (x y z) (list "F" y)))
+	       (("F" "(" "E" ")") . ,#'(lambda (x y z) (list "F" (list x) y (list z))))
 	       (("F" "id")  . ,#'(lambda (x) (list "F" (list x)))))))
 
 (defparameter *g1*
