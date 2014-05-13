@@ -16,8 +16,8 @@
 ;;  rule
 ;; 
 (defstruct (rule
-	    (:constructor make-rule (lhs rhs &key (function nil) )))
-  (id 0 :type fixnum) (lhs 0 :type fixnum) rhs (function nil :type function))
+	    (:constructor make-rule (lhs rhs &key (function nil) (rp 0) (sp 0))))
+  (id 0 :type fixnum) (lhs 0 :type fixnum) rhs (function nil :type function) (rp 0 :type fixnum) (sp 0 :type fixnum))
 
 (declaim (inline rule=))
 (defun rule= (r1 r2)
@@ -103,10 +103,14 @@
     (push (cons unknown-symbol (+ num 1)) symbol-alist)
     ;; make symbol-array and canonical-grammar
     (let ((symbol-array (make-array (+ num 2) :initial-element nil))
-	  (rules (cons (make-rule 0 (list (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal)) num) :function #'(lambda (x y) (list start x (list y))))
+	  (rules (cons (make-rule 0 (list (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal)) num)
+				  :function #'(lambda (x y) (list start x (list y))))
 		       (mapcar #'(lambda (rule)
 				   (let ((r (mapcar #'(lambda (x) (cdr (assoc x symbol-alist :test #'equal))) (car rule))))
-				     (make-rule (car r) (cdr r) :function (cdr rule)))) (grammar-rules grammar)))))
+				     (make-rule (car r) (cdr r)
+						:function (second rule)
+						:rp (car (third rule)) :sp (cdr (third rule)) 
+						))) (grammar-rules grammar)))))
       (dolist (sym-num symbol-alist)
 	(setf (aref symbol-array (cdr sym-num)) (car sym-num)))
       (let ((rule-num 0))
@@ -373,11 +377,12 @@
 	    (:constructor make-state-base))
   (items nil :type list)
   (gotos nil :type list)
-  (comefroms nil :type list))
+  (comefroms nil :type list)
+  (goto-rules nil :type list))
 
-(defun make-state (&key items gotos comefroms)
+(defun make-state (&key items gotos comefroms goto-rules)
   (declare (optimize (speed 3) (safety 0) (space 0)))
-  (make-state-base :items (sort items #'item<) :gotos gotos :comefroms comefroms))
+  (make-state-base :items (sort items #'item<) :gotos gotos :comefroms comefroms :goto-rules goto-rules))
 
 (defun item-set= (k1 k2)
   (declare (optimize (speed 3) (safety 0) (space 0)))
@@ -418,7 +423,12 @@
 		     #'(lambda (item) (and (not (item-suc-null item))
 					   (= symbol (item-next item))))
 		     items)))
-    (lr0-closure cg (mapcar #'shift-item base-items))))
+    (cons (lr0-closure cg (mapcar #'shift-item base-items))
+	  ;; (mapcar #'(lambda (x) (rule-id (item-rule x)))
+		  (remove-if #'(lambda (x) (item-suc-null x)) base-items)
+		  ;; )
+	  )
+	  ))
 
 ;; (define-hash-table-test state=
 ;;     (lambda (x) (sxhash (coerce x 'state))))
@@ -427,6 +437,7 @@
   (let* ((init-items (lr0-closure cg (list (make-item (first (cg-rules cg)) 0))))
 	 (items-ht (make-hash-table :test 'item-set=))
 	 (gotos-ht (make-hash-table :test 'item-set=))
+	 (goto-rules-ht (make-hash-table :test 'item-set=))
 	 (comefroms-ht (make-hash-table :test 'item-set=))
 	 (state-list (list (cons init-items 0)))
 	 (num 0))
@@ -436,7 +447,8 @@
 	       (when items-list
 		 (let ((added nil))
 		   (labels ((g (x items)
-			      (let ((goto (sort (lr0-goto cg items x) #'item<)))
+			      (destructuring-bind (goto0 . goto-rules) (lr0-goto cg items x)
+				(let ((goto (sort goto0 #'item<)))
 				(when goto
 				  (let ((next (gethash goto items-ht nil)))
 				    (unless next
@@ -446,8 +458,8 @@
 				      (setf (gethash goto items-ht) next)
 				      (push goto added))
 				    (pushnew (cons x next) (gethash items gotos-ht) :test #'equal)
-				    (pushnew (cons (gethash items items-ht) x) (gethash goto comefroms-ht) :test #'equal)
-				    )))))
+				    (pushnew (cons x goto-rules) (gethash items goto-rules-ht) :test #'equal) ; for disambiguation
+				    (pushnew (cons (gethash items items-ht) x) (gethash goto comefroms-ht) :test #'equal)))))))
 		     (dolist (items items-list)
 		       (let ((symbols nil))
 		       	 (dolist (item items)
@@ -460,7 +472,10 @@
       (let ((state-array (make-array (+ num 1))))
 	(dolist (s-n state-list state-array)
 	  (setf (aref state-array (cdr s-n))
-		(make-state :items (car s-n) :gotos (gethash (car s-n) gotos-ht) :comefroms (gethash (car s-n) comefroms-ht))))))))
+		(make-state :items (car s-n)
+			    :gotos (gethash (car s-n) gotos-ht)
+			    :comefroms (gethash (car s-n) comefroms-ht)
+			    :goto-rules (gethash (car s-n) goto-rules-ht))))))))
 
 
 ;; ================================
@@ -673,11 +688,11 @@
 	  (mapcar #'(lambda (x) (cg-symbol cg x)) (lalr1-item-la-set lalr1-item))))
 
 (defstruct (lalr1-state
-	    (:constructor make-lalr1-state-base (items gotos)))
-  items gotos)
+	    (:constructor make-lalr1-state-base (items gotos goto-rules)))
+  items gotos goto-rules)
 
-(defun make-lalr1-state (items gotos)
-  (make-lalr1-state-base (sort items #'item< :key #'lalr1-item-body) (sort gotos #'< :key #'car)))
+(defun make-lalr1-state (items gotos goto-rules)
+  (make-lalr1-state-base (sort items #'item< :key #'lalr1-item-body) (sort gotos #'< :key #'car) goto-rules))
 
 (defun cg-print-lalr1-state (cg lalr1-state &optional (stream t))
   (format stream "~{~a~%~}~{~S~^~%~}"
@@ -719,7 +734,8 @@
 					  (when (item-suc-null item)
 					    (gethash (cons i (item-rule item)) (parser-lookahead-set parser)))))
 		     (state-items (parser-state parser i)))
-	     (state-gotos (parser-state parser i)))))
+	      (state-gotos (parser-state parser i))
+	      (state-goto-rules (parser-state parser i)))))
     (make-lalr1-parser (parser-grammar parser) lalr1-state-array)))
 
 
@@ -773,42 +789,52 @@
 (defstruct accept-action)
 
 (defun parser-check (parser) ; lalr1-parser
-  (let* ((n (parser-state-num parser))
+  (let* ((n (lalr1-parser-state-num parser))
 	 (sr-conflict nil)
 	 (rr-conflict nil)
 	 (action-array (make-array n :initial-element nil)))
     ;; Shift Action
     (dotimes (i n)
       (setf (aref action-array i)
-	    (mapcar #'(lambda (p) (cons (car p) (make-shift-action (cdr p)))) (state-gotos (parser-state parser i)))))
+	    (mapcar #'(lambda (p) (list (car p) (make-shift-action (cdr p)))) (lalr1-state-gotos (lalr1-parser-state parser i)))))
     ;; Accept Action
-    (pushnew (cons 0 (make-accept-action)) (aref action-array 0))
+    (if (assoc 0 (aref action-array 0))
+	(pushnew (make-accept-action) (cdr (assoc 0 (aref action-array 0))))
+	(push (list 0 (make-accept-action)) (aref action-array 0)))
     ;; Reduce Accept Action
     (dotimes (i n)
-      (dolist (lalr1-item (state-items (parser-state parser i)))
+      (dolist (lalr1-item (lalr1-state-items (lalr1-parser-state parser i)))
 	(let ((body (lalr1-item-body lalr1-item)))
-	  ;; (when (item= (make-item (first (cg-rules (parser-grammar parser))) 1) body)
-	  ;; 	;; Accept
-	  ;;   (pushnew (cons (cg-num (parser-grammar parser)) (make-accept-action)) (aref action-array i)))
 	  (when (item-suc-null body)
-	    ;; Reduce
-	    ;; (if (= 0 (item-lhs body))
-	    ;; 	(pushnew (cons (cg-num (parser-grammar parser)) (make-accept-action)) (aref action-array i))
 	    (if (null (lalr1-item-la-set lalr1-item))
-		(pushnew (cons -1 (make-reduce-action (item-rule body))) (aref action-array i))
+		(pushnew (list -1 (make-reduce-action (item-rule body))) (aref action-array i))
 		(dolist (la (lalr1-item-la-set lalr1-item))
 		  (let ((action (assoc la (aref action-array i))))
 		    (cond ((null action)
-			   (pushnew (cons la (make-reduce-action  (item-rule body))) (aref action-array i)))
-			  ((reduce-action-p (cdr action))
-			   (let ((new-action (make-reduce-action (item-rule body))))
-			     (pushnew (cons la new-action) (aref action-array i))
-			     (pushnew (cons (cons i la) (cons new-action (cdr action))) rr-conflict)))
-			  ((shift-action-p (cdr action))
-			   (let ((new-action (make-reduce-action (item-rule body))))
-			     (pushnew (cons la new-action) (aref action-array i))
-			     (pushnew (cons (cons i la) (cons new-action (cdr action))) sr-conflict)))
-			  (t nil)))))))))
+			   (push (list la (make-reduce-action (item-rule body))) (aref action-array i)))
+			  (t 
+			   (push (make-reduce-action (item-rule body)) (cdr (assoc la (aref action-array i)))))))))))))
+    ;; conflict check
+    (let ((cg (lalr1-parser-grammar parser)))
+    (dotimes (i n)
+	(dolist (l (aref action-array i))
+	  (destructuring-bind (la . actions) l
+	    (when (< 1 (length actions))
+	      (format t "(~a , \"~a\"):~%" i (cg-symbol cg la))
+	      (let ((all-reduce t)
+		    (ps (apply #'max (mapcar #'rule-sp (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i))))))))
+		(format t "[~a]~%" ps)
+		(dolist (action actions)
+		  (cond ((reduce-action-p action)
+			 (let ((rule (cg-rule-symbol cg (reduce-action-rule action))))
+			   (format t "  <Reduce> ~a: ~a -> ~{~a~^ ~}~%"
+				   (rule-id (reduce-action-rule action)) (car rule) (cdr rule))))
+			((shift-action-p action)
+			 (setf all-reduce nil)
+			 (format t "  <Shift> (~{~a~^,~}) to ~a~%"
+				 (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i)))) (shift-action-num action)))
+			(t nil)))))))))
+    ;; (pushnew (cons (cons i la) (cons new-action (cdr action))) sr-conflict)
     (list action-array sr-conflict rr-conflict)))
 
 
@@ -857,9 +883,9 @@
       (dolist (sr-conflict (second check))
 	(destructuring-bind ((state . la) reduce . shift) sr-conflict
 	  (let ((rule (cg-rule-symbol cg (reduce-action-rule reduce))))
-	    (format t "(~a , \"~a\"):~%  <Shift> to ~a~%  <Reduce> ~a -> ~{~a~^ ~}~%"
-		  state (cg-symbol cg la) (shift-action-num shift)
-		  (car rule) (cdr rule)
+	    (format t "(~a , \"~a\"):~%  <Shift> (~{~a~^,~}) to ~a~%  <Reduce> ~a: ~a -> ~{~a~^ ~}~%"
+		    state (cg-symbol cg la) (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser state)))) (shift-action-num shift)
+		  (rule-id (reduce-action-rule reduce)) (car rule) (cdr rule)
 		  )))))
     (when (third check)
       (format t "* ~a Reduce/Reduce conflict~%" (length (third check)))
@@ -867,10 +893,10 @@
 	(destructuring-bind ((state . la) reduce1 . reduce2) rr-conflict
 	  (let ((rule1 (cg-rule-symbol cg (reduce-action-rule reduce1)))
 		(rule2 (cg-rule-symbol cg (reduce-action-rule reduce2))))
-	    (format t "(~a , \"~a\"):~%  <Reduce> ~a -> ~{~a~^ ~}~%  <Reduce> ~a -> ~{~a~^ ~}~%"
+	    (format t "(~a , \"~a\"):~%  <Reduce> ~a: ~a -> ~{~a~^ ~}~%  <Reduce> ~a: ~a -> ~{~a~^ ~}~%"
 		    state (cg-symbol cg la)
-		    (car rule1) (cdr rule1)
-		    (car rule2) (cdr rule2))))))
+		    (rule-id (reduce-action-rule reduce1)) (car rule1) (cdr rule1)
+		    (rule-id (reduce-action-rule reduce2)) (car rule2) (cdr rule2))))))
     (loop while parsing
 	  do (let* ((state (first (configuration-states conf)))
 		    (symbol (or (first (configuration-symbols conf)) -1))
@@ -1056,7 +1082,8 @@
 	 (make-lalr1-state
 	  (lalr1-closure cg (mapcar #'(lambda (item) (make-lalr1-item item (gethash item (aref la-set-array i))))
 				    (items->kernel (state-items (parser-state parser i)))))
-	  (state-gotos (parser-state parser i)))
+	  (state-gotos (parser-state parser i))
+	  (state-goto-rules (parser-state parser i)))
 	 ))
       (make-lalr1-parser (parser-grammar parser) lalr1-state-array))))
 
@@ -1189,12 +1216,19 @@
 ;; Grammar samples
 (defparameter *g1-f*
   (make-grammar "E"
-             `((("E" "E" "+" "T") . ,#'(lambda (x y z) (list "E" x (list y) z)))
-	       (("E" "T") . ,#'(lambda (x) (list "E" x)))
-	       (("T" "T" "*" "F") . ,#'(lambda (x y z) (list "T" x (list y) z)))
-	       (("T" "F") . ,#'(lambda (x) (list "T" x)))
-	       (("F" "(" "E" ")") . ,#'(lambda (x y z) (list "F" (list x) y (list z))))
-	       (("F" "id")  . ,#'(lambda (x) (list "F" (list x)))))))
+		`((("E" "E" "+" "T") ,#'(lambda (x y z) (list "E" x (list y) z)))
+		  (("E" "T") ,#'(lambda (x) (list "E" x)))
+		  (("T" "T" "*" "F") ,#'(lambda (x y z) (list "T" x (list y) z)))
+		  (("T" "F") ,#'(lambda (x) (list "T" x)))
+		  (("F" "(" "E" ")") ,#'(lambda (x y z) (list "F" (list x) y (list z))))
+		  (("F" "id")  ,#'(lambda (x) (list "F" (list x)))))))
+
+(defparameter *g-minus*
+  (make-grammar 'E
+		`(((E E #\+ E) ,#'(lambda (x y z) (list 'E x (list y) z)))
+		  ((E E #\- E) ,#'(lambda (x y z) (list 'E x (list y) z)))
+		  ((E #\- E) ,#'(lambda (x y) (list 'E (list x) y)))
+		  ((E id) ,#'(lambda (x) (list 'E (list x)))))))
 
 (defparameter *g1*
   (make-grammar "E"
