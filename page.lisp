@@ -1292,7 +1292,7 @@
 		   (0 . 90)
 		   ))))
 
-(defparameter *g-reg-tiger-r*
+(defparameter *g-reg-tiger-inv*
   (make-grammar "S"
 		`((("S" "Reg") (LAMBDA (X) (LIST "S" x)))
 		  (("S" "Void") (LAMBDA (X) (LIST "S" x)))
@@ -1325,6 +1325,11 @@
 		   (LAMBDA (X Y Z W U V P Q) (LIST "MOVEM" (list x) (list y) (list z) w (list u) (list v) p (list q)))
 		   (0 . -90)
 		   ))))
+
+(defparameter *input-g-reg-tiger-1*
+  '("move" "(" "mem" "reg" "," "(" "reg" "+" "(" "const" "*" "reg" ")" ")" ")"))
+(defparameter *input-g-reg-tiger-2*
+  '("move" "(" "mem" "(" "mem" "(" "reg" "+" "const" ")" "+" "(" "reg" "*" "const" ")" ")" "," "mem" "(" "reg" "+" "const" ")" ")" ))
 
 ;; (defparameter *g-arith*
 ;;   (make-grammar 'E
