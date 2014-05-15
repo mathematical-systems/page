@@ -4,12 +4,12 @@
 ;;                                                                  ;;
 ;; ================================================================ ;;
 
-(defpackage :page
-  (:use :common-lisp)
-  (:export :canonicalize :deremer-lalr1-parser :parse)
+(defpackage #:page
+  (:use #:common-lisp)
+  (:export #:canonicalize #:deremer-lalr1-parser #:parse)
   )
 
-(in-package :page)
+(in-package #:page)
 
 (defstruct (grammar
 	    (:constructor make-grammar (start rules)))
@@ -97,10 +97,10 @@
 				 (push symbol body)))
 			(setf (rule-function rule) `(lambda ,args ,(list* 'list (aref symbol-array (rule-lhs rule)) (reverse body)))))))
 		rules))
-      (setf rules (sort rules #'< :key #'(lambda (rule) (length (rule-rhs rule)))))
-      (loop for i from 0 to (- (length rules) 1)
-	    for rule in rules
-	    do (setf (rule-sp rule) i (rule-rp rule) i))
+      ;; (setf rules (sort rules #'< :key #'(lambda (rule) (length (rule-rhs rule)))))
+      ;; (loop for i from 0 to (- (length rules) 1)
+      ;; 	    for rule in rules
+      ;; 	    do (setf (rule-sp rule) i (rule-rp rule) i))
       ;; replace symbol to index
       (make-canonical-grammar
        (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal))
