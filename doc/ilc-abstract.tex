@@ -1,0 +1,95 @@
+\documentclass{acm_proc_article-sp}
+
+% 
+\begin{document}
+\title{PaGe: Simpl and Compact LALR(1) Parser Generator}
+\date{}
+\author{}
+
+\numberofauthors{2}
+\author{
+\alignauthor
+SUDA Keishi\\
+ \email{suda@msi.co.jp}
+\alignauthor
+ABE Seika\\
+ \email{abeseika@msi.co.jp}
+}
+
+\maketitle
+
+\begin{abstract}
+
+
+
+PaGe is a portable, compact and reliable LALR(1) parser generator
+with more general disambiguation method compared to that of traditional parser generator such as Bison.
+
+ % 
+From the past to the present, very many parser generators are implemented
+in various programming languages.  In particular, Bison in C language is
+a notable one due to its high efficiency and reliability.
+It is surely the de fact standard parser generator in C.
+
+We have recently faced with a requirement of making some parsers for
+relatively large languages in ACL (Allegro Common Lisp)
+which is one of the most widely used Lisp programming environment.
+We prefer commercial products due to its reliability and user supports.
+Especially, problems with such complex tool should only be solved by someone
+who has deep knowledge about the tool.
+Of course many parser generators are implemented in Lisp,
+but even ACL does not provide official parser generator.
+As for free software, as far as we know, there is no such tool comparable
+to Bison in the above sense.
+
+Since Lisp has powerful and universal syntactic expression,
+namely S-expression, it is sufficient for Lispers to express and handle
+any syntactic objects.  We suspect that that is why parser generators are
+not so important to Lispers.
+Nevertheless reliable parser generator in Lisp is needed to extend
+the usability of Lisp.
+This is the motivation for developing original parser generator in Lisp.
+ % 
+
+One of PaGe's concept is to give a legible implementation of DeRemer's method for Look-Ahead Set.
+This method makes us enable to generate LALR(1)-parsing-table dircetly from LR(0)-parsing-table by computing Look-Ahead Set based on formal definitions of them.
+For example, DeRemer's method has used in Bison, but there is few other implementation, particularly on Lisp.
+Therefore we decided to give a legible implementation for who would like to understand it.
+
+Other concept is to simplify PaGe's core program for efficiency and readability as possible.
+As a result, PaGe is composed of parser generator engine PaGEn and its wrapper.
+PaGEn is a pared parser-generator engine.
+PaGEn's input is a grammar whose ``symbol'' is restricted to non-negative integer.
+By this restriction, we were able to establish both program efficiency and algorithm readablity, for instance we can naturally use array as function.
+
+Consequently, the role of wrapper are mainly two of translation and interpreting.
+A wrapper translates symbolic input such as grammar or sequence of token into numeric input for PaGEn.
+PaGEn get this as input and return parsing-table or result of parse, for instance.
+Then the wrapper interprets this result for an user or other system. 
+Now, we have defined only the wrapper for using PaGEn in the same way for traditional parser generator.
+If you wish to use PaGEn for other purpose,
+you need only to define the wrapper.
+
+Furthermore, PaGEn can deal with ambiguous grammar i.e. it supports disambiguation.
+PaGEn's disambiguation method is so simple.
+First we give two priority to each rule for reduce-time and shift-time.
+If some conflict has occurred,
+then, we try to solve each conflicts by comparing priorities. 
+Specifically, Reduce/Reduce-conflicts can be solved by reduce using the rule whose reduce-time priority is the greatest in conflicted rules.
+ Shift/Reduce-conflicts can be solved in 2 pattern. 
+ If the propagation-priority, calculated from several shift-time-priorities, is greater than the reduce-time-priority of the rule,
+we solve the conflict by shift.
+ Other, if the reduce-time-priority is greater than the propagation-priority we solve the conflict by reduce.
+
+This mechanism is more general than the method which specifies the associativity of an operator directly, in translatability sense.
+And, dangling-else probrem can be solved uniformly in this mechanism.
+
+\end{abstract}
+\category{D.3.4}{Processors}{Parsing}
+
+\terms{Algorithms}
+
+\keywords{parser generator,disambiguation}
+
+ 
+\end{document}
