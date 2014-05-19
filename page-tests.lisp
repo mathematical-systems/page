@@ -9,6 +9,7 @@
   (:use #:common-lisp #:lisp-unit #:page))
 
 (in-package #:page-tests)
+;; (import 'page::cg-parse)
 
 (define-test g1-parse
   (let* ((cg (canonicalize *g1*))
@@ -31,11 +32,11 @@
 	 (ast4 '("$accept"
 		 ("E" ("T" ("F" ("id"))))
 		 ("$eof"))))
-    (assert-equal ast1 (parse parser '("id" "+" "id")))
-    (assert-equal ast2 (parse parser '("id" "+" "id" "*" "id")))
-    (assert-equal ast3 (parse parser '("(" "id" "+" "id" ")" "*" "id")))
-    (assert-equal ast4 (parse parser '("id")))
-    (assert-true (stringp (parse parser '())))))
+    (assert-equal ast1 (cg-parse parser '("id" "+" "id")) ast1)
+    (assert-equal ast2 (cg-parse parser '("id" "+" "id" "*" "id")))
+    (assert-equal ast3 (cg-parse parser '("(" "id" "+" "id" ")" "*" "id")))
+    (assert-equal ast4 (cg-parse parser '("id")))
+    (assert-true (stringp (cg-parse parser '())))))
 
 
   

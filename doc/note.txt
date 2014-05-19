@@ -4,15 +4,43 @@ PaGe: Parser Generator for LALR(1) Grammar for/by Common Lisp
       +-------------------------+
       | PaGe		        |
       |      +-----------+      |
-      |  +-->| PaGe-Core |---+  |
+      |  +-->|   PaGen   |---+  |
 ----->|--+   +-----------+   +->|----->
       |  +-------------------+  |
       |				|
       +-------------------------+
 
 
+
+
+PaGe is a portable , compact and reliable LALR(1) parser generator.
+PaGe consists of a parser generator engine PaGen and its wrapper .
+
+PaGen is a pared parser-generator engine.
+PaGen get a restricted type grammar whose ``symbols'' are non-negative integer as input.
+This restriction 
+
+
+Simple disambiguation mechanism:
+ PaGen also can take ambiguous grammar as input i.e. it supports disambiguation.
+PaGen's disambiguation mechanism is so simple.
+First, we give two priority to each rule for reduce-time and shift-time.
+Then, when a generated action-table has some conflict,
+ we try to solve each conflicts by comparing priorities. 
+Specifically, Reduce/Reduce-conflicts can be solved by reduce using the rule whose reduce-time priority is the greatest in conflicted rules.
+ Shift/Reduce-conflicts can be solved in 2 pattern. 
+First,  if the propagation-priority, calculated from some shift-time-priorities, is greater than the reduce-time-priority of the rule,
+we solve the conflict by shift.
+Second, if the reduce-time-priority of the rule is greater than the propagation-priority we solve the conflict by reduce using the rule.
+
+This mechanism is more primitive than the method which specifies the associativity of an operator directly, in translatability sense.
+And, dangling-else-probrem can be solved uniformly in this mechanism.
+
 - 必要最低限の機能のみを備えたパーザジェネレータを実装したい
   ポータビリティを高めて様々な用途に気兼ねなく使えるように
+
+- 
+
 
 - しかし単体でもそれなりの機能を備えたものにしたい
   --> エンジン部分の PaGe-Core と、それに幾つかの機能を付け加えた PaGe

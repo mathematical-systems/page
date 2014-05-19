@@ -6,7 +6,7 @@
 
 (defpackage #:page
   (:use #:common-lisp)
-  (:export #:canonicalize #:deremer-lalr1-parser #:parse))
+  (:export #:deremer-lalr1-parser #:parse))
 
 (in-package #:page)
 
@@ -40,7 +40,6 @@
 
 
 
-
 ;; --------------------------------
 ;;  rule
 ;; 
@@ -69,6 +68,11 @@
   start rules nt-num num
   )
 
+(defparameter *cg-nullable-array* :undefined)
+(defparameter *cg-first-array* :undefined)
+(defparameter *cg-follow-array* :undefined)
+(defparameter *cg-first-symbols-array* :undefined)
+
 (defun make-canonical-grammar (start rules nt-num num)
   (setf *cg-nullable-array* :undefined
 	*cg-first-array* :undefined
@@ -77,10 +81,6 @@
   (make-canonical-grammar-base start rules nt-num num))
   
 
-(defparameter *cg-nullable-array* :undefined)
-(defparameter *cg-first-array* :undefined)
-(defparameter *cg-follow-array* :undefined)
-(defparameter *cg-first-symbols-array* :undefined)
 
 (declaim (inline (undefined-p)))
 (defun undefined-p (x) (eq :undefined x))

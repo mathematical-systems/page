@@ -5,6 +5,7 @@
 ;; ================================================================ ;;
 
 (in-package #:page)
+(export '(cg-parse canonicalize canonicalize-f))
 
 (defstruct (grammar
 	    (:constructor make-grammar (start rules)))
