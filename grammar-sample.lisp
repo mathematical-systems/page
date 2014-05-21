@@ -113,7 +113,8 @@
 (defparameter *g-if*
   (make-grammar 'S
 		`(((S if b then S) ,#'(lambda (x y z w) (list 'S (list x) (list y) (list z) w)) (10 . 5))
-		  ((S if b then S else S) ,#'(lambda (x y z w u v) (list 'S (list x) (list y) (list z) w (list u) v)) (20 . 15)))))
+		  ((S if b then S else S) ,#'(lambda (x y z w u v) (list 'S (list x) (list y) (list z) w (list u) v)) (20 . 15)
+		  ((S statement) ,#'(lambda (x y) (list 'S (list 'statement))))))))
 
 (defparameter *g-minus*
   (make-grammar 'E

@@ -12,6 +12,7 @@
   start (rules () :type list))
 
 
+(defparameter *cg-function-array* nil)
 (defparameter *cg-num-to-symbol-array* :undefined)
 (defparameter *cg-symbol-to-num-alist* :undefined)
 (defparameter *cg-unknown-symbol* :undefined)
@@ -34,11 +35,12 @@
     (push (cons eof num) symbol-alist)
     (push (cons unknown-symbol (+ num 1)) symbol-alist)
     ;; make symbol-array and canonical-grammar
-    (let ((symbol-array (make-array (+ num 2) :initial-element nil))
-	  (rules (cons (make-rule 0 (list (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal)) num))
-		       (mapcar #'(lambda (rule)
-				   (let ((r (mapcar #'(lambda (x) (cdr (assoc x symbol-alist :test #'equal))) rule)))
-				     (make-rule (car r) (cdr r)))) (grammar-rules grammar)))))
+    (let* ((symbol-array (make-array (+ num 2) :initial-element nil))
+	   (rules (cons (make-rule 0 (list (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal)) num))
+			(mapcar #'(lambda (rule)
+				    (let ((r (mapcar #'(lambda (x) (cdr (assoc x symbol-alist :test #'equal))) rule)))
+				      (make-rule (car r) (cdr r)))) (grammar-rules grammar))))
+	   (function-array (make-array (length rules))))
       (dolist (sym-num symbol-alist)
 	(setf (aref symbol-array (cdr sym-num)) (car sym-num)))
       (let ((rule-num 0))
@@ -61,14 +63,15 @@
 			  do (if (<= nt-num x)
 				 (push `(list ,symbol) body)
 				 (push symbol body)))
-			(setf (rule-function rule) `(lambda ,args ,(list* 'list (aref symbol-array (rule-lhs rule)) (reverse body)))))))
+			(setf (aref function-array (rule-id rule)) `(lambda ,args ,(list* 'list (aref symbol-array (rule-lhs rule)) (reverse body)))))))
 		rules))
       ;; (setf rules (sort rules #'< :key #'(lambda (rule) (length (rule-rhs rule)))))
       ;; (loop for i from 0 to (- (length rules) 1)
       ;; 	    for rule in rules
       ;; 	    do (setf (rule-sp rule) i (rule-rp rule) i))
       ;; replace symbol to index
-      (setf *cg-num-to-symbol-array* symbol-array
+      (setf *cg-function-array* function-array
+	    *cg-num-to-symbol-array* symbol-array
 	    *cg-symbol-to-num-alist* symbol-alist
 	    *cg-unknown-symbol* unknown-symbol)
       (make-canonical-grammar
@@ -95,23 +98,28 @@
     (push (cons unknown-symbol (+ num 1)) symbol-alist)
     ;; make symbol-array and canonical-grammar
     (let ((symbol-array (make-array (+ num 2) :initial-element nil))
-	  (rules (cons (make-rule 0 (list (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal)) num)
-				  :function #'(lambda (x y) (list start x (list y))))
-		       (mapcar #'(lambda (rule)
-				   (let ((r (mapcar #'(lambda (x) (cdr (assoc x symbol-alist :test #'equal))) (car rule))))
-				     (make-rule (car r) (cdr r)
-						:function (second rule)
-						:rp (or (car (third rule)) 0) :sp (or (cdr (third rule)) 0)
-						))) (grammar-rules grammar)))))
+	  (function-array (make-array (1+ (length (grammar-rules grammar)))))
+	  (rules nil))
+      (setf (aref function-array 0) #'(lambda (x y) (list start x (list y))))
+      (setf rules
+	    (cons (make-rule 0 (list (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal)) num) :id 0)
+		  (reverse (let ((rule-num 0))
+			     (foldl ()
+				    #'(lambda (l rule)
+					(let ((r (mapcar #'(lambda (x) (cdr (assoc x symbol-alist :test #'equal))) (car rule))))
+					  (incf rule-num)
+					  (setf (aref function-array rule-num) (second rule))
+					  (cons (make-rule (car r) (cdr r)
+							   :id rule-num
+							   :rp (or (car (third rule)) 0) :sp (or (cdr (third rule)) 0))
+						l)))
+				    (grammar-rules grammar))))))
       (dolist (sym-num symbol-alist)
 	(setf (aref symbol-array (cdr sym-num)) (car sym-num)))
-      (let ((rule-num 0))
-	(dolist (rule rules)
-	  (setf (rule-id rule) rule-num)
-	  (incf rule-num)))
       (setf (aref symbol-array 0) start (aref symbol-array num) eof)
       ;; replace symbol to index
-      (setf *cg-num-to-symbol-array* symbol-array
+      (setf *cg-function-array* function-array
+	    *cg-num-to-symbol-array* symbol-array
 	    *cg-symbol-to-num-alist* symbol-alist
 	    *cg-unknown-symbol* unknown-symbol)
       (make-canonical-grammar
@@ -165,7 +173,7 @@
   (dotimes (i (lalr1-parser-state-num lalr1-parser))
     (format stream ":state(~a):~%~a~%" i (cg-print-lalr1-state (lalr1-parser-grammar lalr1-parser) (lalr1-parser-state lalr1-parser i) nil))))
 
-(defun cg-print-configuration (cg configuration stream)
+(defun cg-print-configuration (configuration stream)
   (format stream "[~{~a~^ -- ~a -> ~}]~{~a~^ ~}~%"
 	  (p-apply (reverse (configuration-states configuration)) #'(lambda (x) (cg-symbol x)) #'oddp)
 	  (mapcar #'(lambda (x) (cg-symbol x)) (configuration-symbols configuration))))
@@ -247,4 +255,4 @@
 
 (defun cg-parse (parser sequence &key (with-eof nil) (dump nil))
   (let ((input (mapcar #'(lambda (symbol) (or (cdr (assoc symbol *cg-symbol-to-num-alist* :test #'equal)) -1)) sequence)))
-    (parse parser input :with-eof with-eof :dump dump :symbol-printer #'cg-symbol)))
+    (parse parser input :function-array *cg-function-array* :with-eof with-eof :dump dump :symbol-printer #'cg-symbol)))
