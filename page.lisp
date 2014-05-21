@@ -12,6 +12,8 @@
   start (rules () :type list))
 
 (defparameter *cg-function-array* nil)
+(defparameter *cg-rp-array* nil)
+(defparameter *cg-sp-array* nil)
 (defparameter *cg-num-to-symbol-array* :undefined)
 (defparameter *cg-symbol-to-num-alist* :undefined)
 (defparameter *cg-symbol-to-num-ht* :undefined)
@@ -71,6 +73,8 @@
       ;; 	    do (setf (rule-sp rule) i (rule-rp rule) i))
       ;; replace symbol to index
       (setf *cg-function-array* function-array
+	    *cg-rp-array (make-array (length rules) :initial-element 0)
+	    *cg-sp-array (make-array (length rules) :initial-element 0)
 	    *cg-num-to-symbol-array* symbol-array
 	    *cg-symbol-to-num-alist* symbol-alist
 	    *cg-unknown-symbol* unknown-symbol)
@@ -102,6 +106,8 @@
     ;; make symbol-array and canonical-grammar
     (let ((symbol-array (make-array (+ num 2) :initial-element nil))
 	  (function-array (make-array (1+ (length (grammar-rules grammar)))))
+	  (rp-array (make-array (1+ (length (grammar-rules grammar))) :initial-element 0))
+	  (sp-array (make-array (1+ (length (grammar-rules grammar))) :initial-element 0))
 	  (rules nil))
       (setf (aref function-array 0) #'(lambda (x y) (list start x (list y))))
       (setf rules
@@ -112,10 +118,9 @@
 				  (let ((r (mapcar #'(lambda (x) (cdr (assoc x symbol-alist :test #'equal))) (car rule))))
 				    (incf rule-num)
 				    (setf (aref function-array rule-num) (second rule))
-				    (cons (make-rule (car r) (cdr r)
-						     :id rule-num
-						     :rp (or (car (third rule)) 0) :sp (or (cdr (third rule)) 0))
-					  l)))
+				    (setf (aref rp-array rule-num) (or (car (third rule)) 0))
+				    (setf (aref sp-array rule-num) (or (cdr (third rule)) 0))
+				    (cons (make-rule (car r) (cdr r) :id rule-num) l)))
 			      (grammar-rules grammar)
 			      :initial-value '())))))
       (dolist (sym-num symbol-alist)
@@ -123,6 +128,8 @@
       (setf (aref symbol-array 0) start (aref symbol-array num) eof)
       ;; replace symbol to index
       (setf *cg-function-array* function-array
+	    *cg-rp-array* rp-array
+	    *cg-sp-array* sp-array
 	    *cg-num-to-symbol-array* symbol-array
 	    *cg-symbol-to-num-alist* symbol-alist
 	    *cg-unknown-symbol* unknown-symbol)
@@ -265,4 +272,5 @@
     #'(lambda () (if (null input) nil (pop input)))))
 
 (defun cg-parse (parser reader &key (dump nil))
-  (parse parser #'(lambda () (gethash (funcall reader) *cg-symbol-to-num-ht* -1)) :function-array *cg-function-array* :dump dump :symbol-printer #'cg-symbol))
+  (parse #'(lambda () (gethash (funcall reader) *cg-symbol-to-num-ht* -1)) (make-action-array parser *cg-rp-array* *cg-sp-array*)
+	 :function-array *cg-function-array* :dump dump :symbol-printer #'cg-symbol))

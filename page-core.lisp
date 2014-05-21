@@ -7,31 +7,33 @@
 (defpackage #:page
   (:use #:common-lisp)
   (:import-from #:common-lisp)
-  (:export #:deremer-lalr1-parser #:parse))
+  (:export #:deremer-lalr1-parser #:parse #:make-action-array))
 
 (in-package #:page)
 
-
+
+;; --------------------------------
+;;  Utility
+;;
+ 
 (setf (symbol-function 'filter) (symbol-function 'remove-if-not))
-
 (defun take (n l)
   (if (< 0 n) (cons (first l) (take (- n 1) (rest l))) nil))
-
 (defun drop (n l)
   (if (< 0 n) (drop (- n 1) (rest l)) l))
-
 (defun reverse-take (n l)
   (let ((input l)
 	(output nil))
     (dotimes (i n output)
       (push (pop input) output))))
 
+
 ;; --------------------------------
 ;;  rule
 ;; 
 (defstruct (rule
-	    (:constructor make-rule (lhs rhs &key (id 0) (function nil) (rp 0) (sp 0))))
-  (id 0 :type fixnum) (lhs 0 :type fixnum) rhs (rp 0 :type fixnum) (sp 0 :type fixnum))
+	    (:constructor make-rule (lhs rhs &key (id 0) )))
+  (id 0 :type fixnum) (lhs 0 :type fixnum) rhs )
 
 (declaim (inline rule=))
 (defun rule= (r1 r2)
@@ -44,7 +46,9 @@
   (< (rule-id r1) (rule-id r2)))
 (declaim (inline rule<))
 
-;; 
+
+
+;; --------------------------------
 ;; grammar represented by numbers (and symbol-number table)
 ;; 
 (defstruct (canonical-grammar
@@ -67,7 +71,6 @@
 	*cg-first-symbols-array* :undefined)
   (setf *current-cg* (make-canonical-grammar-base start rules nt-num num)))
   
-
 
 (declaim (inline (undefined-p)))
 (defun undefined-p (x) (eq :undefined x))
@@ -101,7 +104,7 @@
 (defun terminal-p (num)
   (<= (cg-nt-num *current-cg*) num))
 
-
+
 ;; --------------------------------
 ;;  memoize
 ;; 
@@ -121,10 +124,11 @@
   `(memoize (defun ,fn ,args . , body)))
 
 
+
 ;; nullability-checker
 (defun calc-nullable ()
   (let ((nullable (make-array (+ (cg-num *current-cg*) 1) :element-type 'bit :initial-element 0))
-	(changed t))
+n	(changed t))
     ;; initialize
     (loop while changed
 	  do (setf changed nil)
@@ -220,7 +224,7 @@
     (setf *cg-follow-array* follows)))
   
 
-
+
 ;; --------------------------------
 ;;  LR parser
 ;; 
@@ -297,6 +301,7 @@
 	    fs))
       ()))
 
+
 ;; 
 ;; state
 ;; 
@@ -395,6 +400,7 @@
 			    :goto-rules (gethash (car s-n) goto-rules-ht))))))))
 
 
+
 ;; ================================
 ;;  DeRemer
 ;; 
@@ -574,6 +580,7 @@
 		 :test #'equal)))))
     (setf (parser-lookahead-set parser) result)))
 
+
 ;; --------------------------------
 ;;  LALR(1)-parse-table
 ;; 
@@ -636,6 +643,7 @@
 	      (state-goto-rules (parser-state parser i)))))
     (make-lalr1-parser (parser-grammar parser) lalr1-state-array)))
 
+
 ;; --------------------------------
 ;;  Parser Action
 ;;  : conflict checker
@@ -650,66 +658,73 @@
 
 (defstruct accept-action)
 
-(defun parser-check (parser) ; lalr1-parser
+(defun make-action-array (parser &optional (rp-array ()) (sp-array ())) ; lalr1-parser
   (let* ((n (lalr1-parser-state-num parser))
 	 (conflicts nil)
 	 (action-array (make-array n :initial-element nil)))
+    (labels ((rule-rp (rule)
+	       (if (null rp-array) 0
+		   (aref rp-array (rule-id rule))))
+	     (rule-sp (rule)
+	       (if (null sp-array) 0
+		   (aref sp-array (rule-id rule)))))
     ;; Shift Action
-    (dotimes (i n)
-      (setf (aref action-array i)
-	    (mapcar #'(lambda (p) (list (car p) (make-shift-action (cdr p)))) (lalr1-state-gotos (lalr1-parser-state parser i)))))
-    ;; Accept Action
-    (if (assoc 0 (aref action-array 0))
-	(pushnew (make-accept-action) (cdr (assoc 0 (aref action-array 0))))
-	(push (list 0 (make-accept-action)) (aref action-array 0)))
-    ;; Reduce Accept Action
-    (dotimes (i n)
-      (dolist (lalr1-item (lalr1-state-items (lalr1-parser-state parser i)))
-	(let ((body (lalr1-item-body lalr1-item)))
-	  (when (item-suc-null body)
-	    (if (null (lalr1-item-la-set lalr1-item))
-		(pushnew (list -1 (make-reduce-action (item-rule body))) (aref action-array i))
-		(dolist (la (lalr1-item-la-set lalr1-item))
-		  (let ((action (assoc la (aref action-array i))))
-		    (cond ((null action)
-			   (push (list la (make-reduce-action (item-rule body))) (aref action-array i)))
-			  (t 
-			   (push (make-reduce-action (item-rule body)) (cdr (assoc la (aref action-array i)))))))))))))
-    ;; conflict check
-    (dotimes (i n)
-      (dolist (l (aref action-array i))
-	(destructuring-bind (la . actions) l
-	  (when (< 1 (length actions))
-	    (let ((conflict-info nil)
-		  (shift-ps (mapcar #'rule-sp (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i))))))
-		  (ps 0))
-	      (when shift-ps (setf ps (apply #'max shift-ps)))
-	      (dolist (action actions)
-		(cond ((reduce-action-p action)
-		       (push (cons 'reduce (reduce-action-rule action)) conflict-info))
-		      ((shift-action-p action)
-		       (push (cons 'shift (cons (mapcar #'rule-id (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i)))))
-						(shift-action-num action)))
-			     conflict-info))
-		      (t nil)))
-	      (push (cons (cons i la) conflict-info) conflicts)
-	      (setf actions
-		    (sort 
-		     (mapcar #'(lambda (action)
-				 (cond ((reduce-action-p action)
-					(cons (rule-rp (reduce-action-rule action)) action))
-				       ((shift-action-p action)
-					(cons ps action))
-				       (t (cons 0 action))))
-			     actions)
-		     #'< :key #'car))
-	      (let ((max (apply #'max (mapcar #'car actions))))
-		(setf (cdr (assoc la (aref action-array i))) (mapcar #'cdr (filter #'(lambda (x) (= max (car x))) actions))))
-	      )))))
-    ;; (pushnew (cons (cons i la) (cons new-action (cdr action))) sr-conflict)
-    (values action-array conflicts)))
+      (dotimes (i n)
+	(setf (aref action-array i)
+	      (mapcar #'(lambda (p) (list (car p) (make-shift-action (cdr p)))) (lalr1-state-gotos (lalr1-parser-state parser i)))))
+      ;; Accept Action
+      (if (assoc 0 (aref action-array 0))
+	  (pushnew (make-accept-action) (cdr (assoc 0 (aref action-array 0))))
+	  (push (list 0 (make-accept-action)) (aref action-array 0)))
+      ;; Reduce Accept Action
+      (dotimes (i n)
+	(dolist (lalr1-item (lalr1-state-items (lalr1-parser-state parser i)))
+	  (let ((body (lalr1-item-body lalr1-item)))
+	    (when (item-suc-null body)
+	      (if (null (lalr1-item-la-set lalr1-item))
+		  (pushnew (list -1 (make-reduce-action (item-rule body))) (aref action-array i))
+		  (dolist (la (lalr1-item-la-set lalr1-item))
+		    (let ((action (assoc la (aref action-array i))))
+		      (cond ((null action)
+			     (push (list la (make-reduce-action (item-rule body))) (aref action-array i)))
+			    (t 
+			     (push (make-reduce-action (item-rule body)) (cdr (assoc la (aref action-array i)))))))))))))
+      ;; conflict check
+      (dotimes (i n)
+	(dolist (l (aref action-array i))
+	  (destructuring-bind (la . actions) l
+	    (when (< 1 (length actions))
+	      (let ((conflict-info nil)
+		    (shift-ps (mapcar #'rule-sp (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i))))))
+		    (ps 0))
+		(when shift-ps (setf ps (apply #'max shift-ps)))
+		(dolist (action actions)
+		  (cond ((reduce-action-p action)
+			 (push (cons 'reduce (reduce-action-rule action)) conflict-info))
+			((shift-action-p action)
+			 (push (cons 'shift (cons (mapcar #'rule-id (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i)))))
+						  (shift-action-num action)))
+			       conflict-info))
+			(t nil)))
+		(push (cons (cons i la) conflict-info) conflicts)
+		(setf actions
+		      (sort 
+		       (mapcar #'(lambda (action)
+				   (cond ((reduce-action-p action)
+					  (cons (rule-rp (reduce-action-rule action)) action))
+					 ((shift-action-p action)
+					  (cons ps action))
+					 (t (cons 0 action))))
+			       actions)
+		       #'< :key #'car))
+		(let ((max (apply #'max (mapcar #'car actions))))
+		  (setf (cdr (assoc la (aref action-array i))) (mapcar #'cdr (filter #'(lambda (x) (= max (car x))) actions))))
+		)))))
+      ;; (pushnew (cons (cons i la) (cons new-action (cdr action))) sr-conflict)
+      (values action-array conflicts))))
 
 
+
 (defstruct (configuration
 	    (:constructor make-configuration (states tokens reader))
 	    (:print-function print-configuration))
@@ -730,9 +745,8 @@
 	      (configuration-tokens configuration))
       (write configuration :stream stream)))
 
-(defun parse (parser reader &key (function-array nil) (dump nil) (symbol-printer #'identity))
-  (let* ((action-array (parser-check parser))
-	 (conf (make-configuration
+(defun parse (reader action-array &key (function-array nil) (dump nil) (symbol-printer #'identity))
+  (let* ((conf (make-configuration
 		(list 0) 
 		'()
 		reader))
@@ -785,6 +799,8 @@
 			(when dump (format t "Accept!" ))
 			(first val-stack)))))
 
+
+
 ;; 
 ;; Dragon Book's Method
 ;; 
