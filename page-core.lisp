@@ -412,14 +412,15 @@ n	(changed t))
   (state-num 0 :type fixnum)
   (transitions nil :type list)
   (nt-transitions nil :type list)
-  (direct-read nil )
-  (reads nil)
-  (read-set nil)
-  (includes nil)
-  (follow-set nil)
-  (lookback nil)
-  (lookahead-set nil)
   )
+
+(defparameter *pagen-direct-read* nil)
+(defparameter *pagen-reads* nil)
+(defparameter *pagen-read-set* nil)
+(defparameter *pagen-includes* nil)
+(defparameter *pagen-follow-set* nil)
+(defparameter *pagen-lookback* nil)
+(defparameter *pagen-lookahead-set* nil)
 
 (defun make-parser (grammar state-array)
   (make-parser-base grammar state-array (length state-array)))
@@ -449,7 +450,7 @@ n	(changed t))
 	  (setf (gethash (cons i (car transition)) dr-set)
 		(remove-if-not #'(lambda (x) (cg-terminal-p x))
 			       (mapcar #'car (state-gotos (parser-state parser (cdr transition)))))))))
-    (setf (parser-direct-read parser) dr-set)))
+    (setf *pagen-direct-read* dr-set)))
 
 ;; note: we don't have to calculate before the calculating lookaheads
 (defun calc-reads (parser)
@@ -466,7 +467,7 @@ n	(changed t))
 		(mapcar #'(lambda (x) (cons (cdr transition) x))
 			(remove-if-not #'(lambda (x) (cg-nullable  x))
 				       (mapcar #'car (state-gotos (parser-state parser (cdr transition))))))))))
-    (setf (parser-reads parser) reads)))
+    (setf *pagen-reads* reads)))
 
 ;; assoc using equal
 (defun assoceq (item alist)
@@ -513,7 +514,7 @@ n	(changed t))
 (defun calc-read-set (parser)
   (let* ((nt-transitions (parser-nt-transitions parser)))
     ;; making node-list
-    (setf (parser-read-set parser) (alg-digraph nt-transitions (parser-reads parser) (parser-direct-read parser)))))
+    (setf *pagen-read-set* (alg-digraph nt-transitions *pagen-reads* *pagen-direct-read*))))
 
 (defun rev-traverse (parser starts sequence)
   ;; (declare (optimize (speed 3) (safety 0) (space 0)))
@@ -548,12 +549,12 @@ n	(changed t))
 				 (union (gethash transition result nil) available))))
 			   ;; (setf (gethash transition result) available))))
 		   (push (pop rhs) pre)))))
-    (setf (parser-includes parser) result)))
+    (setf *pagen-includes* result)))
 
 
 (defun calc-follow-set (parser)
   (let* ((nt-transitions (parser-nt-transitions parser)))
-    (setf (parser-follow-set parser) (alg-digraph nt-transitions (parser-includes parser) (parser-read-set parser)))))
+    (setf *pagen-follow-set* (alg-digraph nt-transitions *pagen-includes* *pagen-read-set*))))
 
 (defun calc-lookback (parser)
   (let ((result (make-hash-table :test #'equal)))
@@ -564,7 +565,7 @@ n	(changed t))
 	    (when ps
 	      (setf (gethash (cons n (rule-id (item-rule item))) result)
 		    (mapcar #'(lambda (p) (cons p (item-lhs item))) ps)) result)))))
-    (setf (parser-lookback parser) result)))
+    (setf *pagen-lookback* result)))
 
 (defun calc-lookahead-set (parser)
   (let ((result (make-hash-table :test #'equal))
@@ -574,11 +575,11 @@ n	(changed t))
 	(when (item-suc-null item)
 	  (setf (gethash (cons i (rule-id (item-rule item))) result)
 		(remove-duplicates
-		 (apply #'append (mapcar #'(lambda (transition) (gethash transition (parser-follow-set parser) nil))
-					 (gethash (cons i (rule-id (item-rule item))) (parser-lookback parser) nil)
+		 (apply #'append (mapcar #'(lambda (transition) (gethash transition *pagen-follow-set* nil))
+					 (gethash (cons i (rule-id (item-rule item))) *pagen-lookback* nil)
 					 ))
 		 :test #'equal)))))
-    (setf (parser-lookahead-set parser) result)))
+    (setf *pagen-lookahead-set* result)))
 
 
 ;; --------------------------------
@@ -637,7 +638,7 @@ n	(changed t))
 	      (mapcar #'(lambda (item)
 			  (make-lalr1-item item
 					  (when (item-suc-null item)
-					    (gethash (cons i (rule-id (item-rule item))) (parser-lookahead-set parser)))))
+					    (gethash (cons i (rule-id (item-rule item))) *pagen-lookahead-set*))))
 		     (state-items (parser-state parser i)))
 	      (state-gotos (parser-state parser i))
 	      (state-goto-rules (parser-state parser i)))))
