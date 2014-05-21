@@ -32,11 +32,12 @@
 	 (ast4 '("$accept"
 		 ("E" ("T" ("F" ("id"))))
 		 ("$eof"))))
-    (assert-equal ast1 (cg-parse parser '("id" "+" "id")) ast1)
-    (assert-equal ast2 (cg-parse parser '("id" "+" "id" "*" "id")))
-    (assert-equal ast3 (cg-parse parser '("(" "id" "+" "id" ")" "*" "id")))
-    (assert-equal ast4 (cg-parse parser '("id")))
-    (assert-true (stringp (cg-parse parser '())))))
+    (setf (symbol-function 'reader-of) #'(lambda (l) (page::simple-reader l :eof "$eof")))
+    (assert-equal ast1 (cg-parse parser (reader-of '("id" "+" "id"))))
+    (assert-equal ast2 (cg-parse parser (reader-of '("id" "+" "id" "*" "id"))))
+    (assert-equal ast3 (cg-parse parser (reader-of '("(" "id" "+" "id" ")" "*" "id"))))
+    (assert-equal ast4 (cg-parse parser (reader-of '("id"))))
+    (assert-true (stringp (cg-parse parser (reader-of '()))))))
 
 
   

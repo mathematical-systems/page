@@ -11,16 +11,16 @@
 	    (:constructor make-grammar (start rules)))
   start (rules () :type list))
 
-
 (defparameter *cg-function-array* nil)
 (defparameter *cg-num-to-symbol-array* :undefined)
 (defparameter *cg-symbol-to-num-alist* :undefined)
+(defparameter *cg-symbol-to-num-ht* :undefined)
 (defparameter *cg-unknown-symbol* :undefined)
 
 (defun canonicalize (grammar &key (start "$accept") (eof "$eof") (unknown-symbol "#"))
   (let* ((ntset (remove-duplicates (mapcar #'car (grammar-rules grammar)) :test #'equal))
 	 (tset (set-difference (remove-duplicates (apply #'append (mapcar #'cdr (grammar-rules grammar))) :test #'equal) ntset :test #'equal))
-	 (symbol-alist nil)
+	 (symbol-alist (list (cons start 0)))
 	 (nt-num 1)
 	 (num 0))
     ;; numbering to non-terminal symbol
@@ -74,6 +74,9 @@
 	    *cg-num-to-symbol-array* symbol-array
 	    *cg-symbol-to-num-alist* symbol-alist
 	    *cg-unknown-symbol* unknown-symbol)
+      (setf *cg-symbol-to-num-ht* (make-hash-table :test #'equal))
+      (dolist (sym-num symbol-alist)
+	(setf (gethash (car sym-num) *cg-symbol-to-num-ht*) (cdr sym-num)))
       (make-canonical-grammar
        (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal))
        rules nt-num num))))
@@ -82,7 +85,7 @@
 (defun canonicalize-f (grammar &key (start "$accept") (eof "$eof") (unknown-symbol "#"))
   (let* ((ntset (remove-duplicates (mapcar #'caar (grammar-rules grammar)) :test #'equal))
 	 (tset (set-difference (remove-duplicates (apply #'append (mapcar #'cdar (grammar-rules grammar))) :test #'equal) ntset :test #'equal))
-	 (symbol-alist nil)
+	 (symbol-alist (list (cons start 0)))
 	 (nt-num 1)
 	 (num 0))
     ;; numbering to non-terminal symbol
@@ -104,16 +107,17 @@
       (setf rules
 	    (cons (make-rule 0 (list (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal)) num) :id 0)
 		  (reverse (let ((rule-num 0))
-			     (foldl ()
-				    #'(lambda (l rule)
-					(let ((r (mapcar #'(lambda (x) (cdr (assoc x symbol-alist :test #'equal))) (car rule))))
-					  (incf rule-num)
-					  (setf (aref function-array rule-num) (second rule))
-					  (cons (make-rule (car r) (cdr r)
-							   :id rule-num
-							   :rp (or (car (third rule)) 0) :sp (or (cdr (third rule)) 0))
-						l)))
-				    (grammar-rules grammar))))))
+			     (reduce
+			      #'(lambda (l rule)
+				  (let ((r (mapcar #'(lambda (x) (cdr (assoc x symbol-alist :test #'equal))) (car rule))))
+				    (incf rule-num)
+				    (setf (aref function-array rule-num) (second rule))
+				    (cons (make-rule (car r) (cdr r)
+						     :id rule-num
+						     :rp (or (car (third rule)) 0) :sp (or (cdr (third rule)) 0))
+					  l)))
+			      (grammar-rules grammar)
+			      :initial-value '())))))
       (dolist (sym-num symbol-alist)
 	(setf (aref symbol-array (cdr sym-num)) (car sym-num)))
       (setf (aref symbol-array 0) start (aref symbol-array num) eof)
@@ -122,6 +126,9 @@
 	    *cg-num-to-symbol-array* symbol-array
 	    *cg-symbol-to-num-alist* symbol-alist
 	    *cg-unknown-symbol* unknown-symbol)
+      (setf *cg-symbol-to-num-ht* (make-hash-table :test #'equal))
+      (dolist (sym-num symbol-alist)
+	(setf (gethash (car sym-num) *cg-symbol-to-num-ht*) (cdr sym-num)))
       (make-canonical-grammar
        (cdr (assoc (grammar-start grammar) symbol-alist :test #'equal))
        rules nt-num num))))
@@ -253,6 +260,9 @@
   (with-open-file (ost fname :direction :output :if-exists :supersede)
     (dot-tree tree ost)))
 
-(defun cg-parse (parser sequence &key (with-eof nil) (dump nil))
-  (let ((input (mapcar #'(lambda (symbol) (or (cdr (assoc symbol *cg-symbol-to-num-alist* :test #'equal)) -1)) sequence)))
-    (parse parser input :function-array *cg-function-array* :with-eof with-eof :dump dump :symbol-printer #'cg-symbol)))
+(defun simple-reader (l &key eof)
+  (let ((input (append l (list eof))))
+    #'(lambda () (if (null input) nil (pop input)))))
+
+(defun cg-parse (parser reader &key (dump nil))
+  (parse parser #'(lambda () (gethash (funcall reader) *cg-symbol-to-num-ht* -1)) :function-array *cg-function-array* :dump dump :symbol-printer #'cg-symbol))

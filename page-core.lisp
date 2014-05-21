@@ -6,39 +6,25 @@
 
 (defpackage #:page
   (:use #:common-lisp)
+  (:import-from #:common-lisp)
   (:export #:deremer-lalr1-parser #:parse))
 
 (in-package #:page)
 
-;; --------------------------------
-;; utilities
-;; 
-(defun foldl (e op l)
-  (if l (foldl (funcall op e (first l)) op (rest l)) e))
 
-(defun filter (predicate sequence)
-  (unless (null sequence)
-    (destructuring-bind (x . ls) sequence
-      (if (funcall predicate x)
-	  (cons x (filter predicate ls))
-	  (filter predicate ls)))))
+(setf (symbol-function 'filter) (symbol-function 'remove-if-not))
 
 (defun take (n l)
   (if (< 0 n) (cons (first l) (take (- n 1) (rest l))) nil))
+
+(defun drop (n l)
+  (if (< 0 n) (drop (- n 1) (rest l)) l))
 
 (defun reverse-take (n l)
   (let ((input l)
 	(output nil))
     (dotimes (i n output)
       (push (pop input) output))))
-
-(defun drop (n l)
-  (if (< 0 n) (drop (- n 1) (rest l)) l))
-
-(defun set-eq (s1 s2 &key (test #'equal))
-  (null (set-exclusive-or s1 s2 :test test)))
-
-
 
 ;; --------------------------------
 ;;  rule
@@ -690,79 +676,79 @@
 			  (t 
 			   (push (make-reduce-action (item-rule body)) (cdr (assoc la (aref action-array i)))))))))))))
     ;; conflict check
-    (let ((cg (lalr1-parser-grammar parser)))
-      (dotimes (i n)
-	(dolist (l (aref action-array i))
-	  (destructuring-bind (la . actions) l
-	    (when (< 1 (length actions))
-	      (let ((all-reduce t)
-		    (conflict-info nil)
-		    (shift-ps (mapcar #'rule-sp (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i))))))
-		    (ps 0))
-		(when shift-ps (setf ps (apply #'max shift-ps)))
-		(dolist (action actions)
-		  (cond ((reduce-action-p action)
-			 (push (cons 'reduce (reduce-action-rule action)) conflict-info))
-			((shift-action-p action)
-			 (setf all-reduce nil)
-			 (push (cons 'shift (cons (mapcar #'rule-id (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i)))))
-						  (shift-action-num action)))
-			       conflict-info))
-			(t nil)))
-		(push (cons (cons i la) conflict-info) conflicts)
-		(setf actions
-		      (sort 
-		       (mapcar #'(lambda (action)
-				   (cond ((reduce-action-p action)
-					  (cons (rule-rp (reduce-action-rule action)) action))
-					 ((shift-action-p action)
-					  (cons ps action))
-					 (t (cons 0 action))))
-			       actions)
-		       #'< :key #'car))
-		(let ((max (apply #'max (mapcar #'car actions))))
-		  (setf (cdr (assoc la (aref action-array i))) (mapcar #'cdr (filter #'(lambda (x) (= max (car x))) actions))))
-		))))))
+    (dotimes (i n)
+      (dolist (l (aref action-array i))
+	(destructuring-bind (la . actions) l
+	  (when (< 1 (length actions))
+	    (let ((conflict-info nil)
+		  (shift-ps (mapcar #'rule-sp (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i))))))
+		  (ps 0))
+	      (when shift-ps (setf ps (apply #'max shift-ps)))
+	      (dolist (action actions)
+		(cond ((reduce-action-p action)
+		       (push (cons 'reduce (reduce-action-rule action)) conflict-info))
+		      ((shift-action-p action)
+		       (push (cons 'shift (cons (mapcar #'rule-id (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i)))))
+						(shift-action-num action)))
+			     conflict-info))
+		      (t nil)))
+	      (push (cons (cons i la) conflict-info) conflicts)
+	      (setf actions
+		    (sort 
+		     (mapcar #'(lambda (action)
+				 (cond ((reduce-action-p action)
+					(cons (rule-rp (reduce-action-rule action)) action))
+				       ((shift-action-p action)
+					(cons ps action))
+				       (t (cons 0 action))))
+			     actions)
+		     #'< :key #'car))
+	      (let ((max (apply #'max (mapcar #'car actions))))
+		(setf (cdr (assoc la (aref action-array i))) (mapcar #'cdr (filter #'(lambda (x) (= max (car x))) actions))))
+	      )))))
     ;; (pushnew (cons (cons i la) (cons new-action (cdr action))) sr-conflict)
     (values action-array conflicts)))
 
 
 (defstruct (configuration
-	    (:constructor make-configuration (states symbols))
+	    (:constructor make-configuration (states tokens reader))
 	    (:print-function print-configuration))
   (states nil :type list)
-  (symbols nil :type list))
+  (tokens nil :type list)
+  (reader () :type function))
+
+(defun first-token (configuration)
+  (when (null (configuration-tokens configuration))
+    (push (funcall (configuration-reader configuration)) (configuration-tokens configuration)))
+  (first (configuration-tokens configuration)))
 
 (defun print-configuration (configuration stream depth)
   (if (or (and (numberp *print-level*) (>= depth *print-level*))
 	  (configuration-p configuration))
       (format stream "[~{~a~^-~a->~}]~{~a~}~%"
 	      (reverse (configuration-states configuration))
-	      (configuration-symbols configuration))
+	      (configuration-tokens configuration))
       (write configuration :stream stream)))
 
-(defun p-apply (sequence f predicate)
-  (let ((result nil))
-    (do* ((l sequence (rest l)) (x (car l) (car l)) (n 0 (incf n)))
-	 ((null l) (reverse result))
-      (push (if (funcall predicate n) (funcall f x) x) result))))
-    
-
-(defun parse (parser input &key (function-array nil) (with-eof nil) (dump nil) (symbol-printer #'identity))
+(defun parse (parser reader &key (function-array nil) (dump nil) (symbol-printer #'identity))
   (let* ((action-array (parser-check parser))
 	 (conf (make-configuration
 		(list 0) 
-		(if with-eof input (append input (list (cg-num (parser-grammar parser)))))))
+		'()
+		reader))
 	 (symbol-stack nil)
 	 (val-stack nil)
 	 (parsing t)
 	 (result nil))
-    ;; Report Shift/Reduce conflict.
     (loop while parsing
 	  do (let* ((state (first (configuration-states conf)))
-		    (symbol (or (first (configuration-symbols conf)) -1))
+		    (symbol (or (first-token conf) -1)) ; -1 doesn't appear in grammar
 		    (actions (cdr (assoc symbol (aref action-array state) :test #'=))))
-	       
+	       (when dump
+		 (format t "~3,,,' @a: ~{~a ~}. ~{~a~^ ~}~%"
+			 state
+			 (reverse (mapcar #'(lambda (x) (funcall symbol-printer x)) symbol-stack))
+			 (mapcar #'(lambda (x) (funcall symbol-printer x)) (configuration-tokens conf))))	
 	       (cond ((null actions)
 		      (setf result "error: no action.~%" parsing nil))
 		     ((< 1 (length actions))
@@ -770,7 +756,7 @@
 		      (setf result "error: conflict.~%" parsing nil))
 		     ((shift-action-p (first actions))
 		      ;; (when dump (format t "Shift~%"))
-		      (let ((x (pop (configuration-symbols conf))))
+		      (let ((x (pop (configuration-tokens conf))))
 			    (when (cg-terminal-p x)
 			      (push (funcall symbol-printer x) val-stack))
 			(push x symbol-stack))
@@ -779,11 +765,6 @@
 		      (let* ((rule (reduce-action-rule (first actions)))
 			     (lhs (rule-lhs rule))
 			     (rhs (rule-rhs rule)))
-			(when dump
-			  (format t "~3,,,' @a: ~{~a ~}. ~{~a~^ ~}~%"
-				  state
-				  (reverse (mapcar #'(lambda (x) (funcall symbol-printer x)) symbol-stack))
-				  (mapcar #'(lambda (x) (funcall symbol-printer x)) (configuration-symbols conf))))
 			;; (when dump (format t "Reduce by ~a -> ~{~a~^ ~}~%" (cg-symbol cg lhs) (mapcar #'(lambda (x) (cg-symbol cg x)) rhs)))
 			(dotimes (i (length rhs))
 			  ;tmp
@@ -796,7 +777,7 @@
 			      (push (pop val-stack) vals))
 			    (push (apply (aref function-array (rule-id rule)) vals) val-stack)
 			    ))
-			(push lhs (configuration-symbols conf))))
+			(push lhs (configuration-tokens conf))))
 		     ((accept-action-p (first actions))
 		      (setf result nil parsing nil))
 		     (t (setf result "error: invalid action.~%" parsing nil)))))
