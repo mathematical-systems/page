@@ -7,7 +7,7 @@
 (defpackage #:page
   (:use #:common-lisp)
   (:import-from #:common-lisp)
-  (:export #:deremer-lalr1-parser #:parse #:make-action-array))
+  (:export #:deremer-lalr1-parser #:parse #:make-parser #:make-action-array))
 
 (in-package #:page)
 
@@ -26,6 +26,8 @@
 	(output nil))
     (dotimes (i n output)
       (push (pop input) output))))
+(defun set-eq (s1 s2 &key (test #'equal))
+  (null (set-exclusive-or s1 s2 :test test)))
 
 
 ;; --------------------------------
@@ -179,8 +181,8 @@ n	(changed t))
 		   (setf changed t)))))
     (setf *cg-first-array* firsts)))
 		     
-(defun nt-derive-first (cg symbol &optional (seen nil))
-  (let ((rules (cg-rules cg))
+(defun nt-derive-first (symbol &optional (seen nil))
+  (let ((rules (cg-rules *current-cg*))
 	(result nil))
     (dolist (rule rules result)
       (when (and (= symbol (rule-lhs rule))
@@ -189,7 +191,7 @@ n	(changed t))
 	  (when (and (cg-non-terminal-p X)
 		     (not (member X seen)))
 	    (pushnew X result)
-	    (setf result (union result (nt-derive-first cg X (cons symbol seen))))))))))
+	    (setf result (union result (nt-derive-first X (cons symbol seen))))))))))
 	
 (defun cg-sequence-first (sequence)
   (if (null sequence) nil
@@ -198,13 +200,13 @@ n	(changed t))
 	    (union firsts (cg-sequence-first (rest sequence)))
 	    firsts))))
 
-(defun calc-follow (cg)
-  (let ((follows (make-array (+ (cg-num cg) 1) :initial-element nil))
+(defun calc-follow ()
+  (let ((follows (make-array (+ (cg-num *current-cg*) 1) :initial-element nil))
 	(changed t))
-    (push (cg-num cg) (aref follows (cg-start cg)))
+    (push (cg-num *current-cg*) (aref follows (cg-start *current-cg*)))
     (loop while changed
 	  do (setf changed nil)
-	     (dolist (rule (cg-rules cg))
+	     (dolist (rule (cg-rules *current-cg*))
 	       (let ((A (rule-lhs rule)))
 		 (labels ((f (symbol-list)
 			    (let ((B (first symbol-list)))
@@ -233,8 +235,8 @@ n	(changed t))
 ;;  lr-item
 ;; 
 (defstruct (item 
-	    (:constructor make-item (rule position)))
-  rule (position 0 :type fixnum))
+	    (:constructor make-item (rule position &key (la-set nil))))
+  rule (position 0 :type fixnum) (la-set nil))
 
 (declaim (inline item-rule item-lhs item-rhs item-pre item-suc  item-next item= item<))
 
@@ -263,9 +265,6 @@ n	(changed t))
 	 (< (item-position i1) (item-position i2)))
 	(t nil)))
 
-
-
-
 (defun shift-item (item)
   (unless (item-suc-null item)
     (make-item
@@ -273,33 +272,34 @@ n	(changed t))
      (+ (item-position item) 1))))
 
 
-(defun cg-first-symbols (cg n)
+(defun cg-first-symbols (n)
   (when (undefined-p *cg-first-symbols-array*)
-    (setf *cg-first-symbols-array* (make-array (+ (cg-num cg) 1) :initial-element nil)))
+    (setf *cg-first-symbols-array* (make-array (+ (cg-num *current-cg*) 1) :initial-element nil)))
   (aref *cg-first-symbols-array* n))
 
-(defun first-symbols (cg n &optional (visited nil))
+(defun first-symbols (n &optional (visited nil))
   (declare (type fixnum n))
   (cond ((cg-terminal-p n) (list n))
 	((member n visited) nil)
-	(t (let ((result (cg-first-symbols cg n)))
+	(t (let ((result (cg-first-symbols n)))
 	     (when (eq result nil)
 	       (setf result (list n))
-	       (dolist (rule (cg-rules cg))
+	       (dolist (rule (cg-rules *current-cg*))
 		 (when (and (= n (rule-lhs rule)) (rule-rhs rule))
-		   (setf result (union (sequence-first-symbols cg (rule-rhs rule) (cons n visited)) result)))))
+		   (setf result (union (sequence-first-symbols (rule-rhs rule) (cons n visited)) result)))))
 	     ;; (unless visited (setf (aref (cg-first-symbols-array cg) n) result))
 	     (setf (aref *cg-first-symbols-array* n) result)
 	     result))))
 
-(defun sequence-first-symbols (cg sequence &optional (visited nil))
+(defun sequence-first-symbols (sequence &optional (visited nil))
   (declare (optimize (speed 3) (space 0)))
   (if sequence
-      (let ((fs (first-symbols cg (first sequence) visited)))
+      (let ((fs (first-symbols (first sequence) visited)))
 	(if (cg-nullable (first sequence))
-	    (union fs (sequence-first-symbols cg (rest sequence) visited))
+	    (union fs (sequence-first-symbols (rest sequence) visited))
 	    fs))
       ()))
+
 
 
 ;; 
@@ -325,9 +325,9 @@ n	(changed t))
 	   ((or (eq l1 l2) (null l1) (null l2)) (eq l1 l2))
 	(unless (item= x y) (return nil)))))
 
-(defun lr0-closure (cg items)
+(defun lr0-closure (items)
   (declare (optimize (speed 3) (safety 0) (space 0)))
-  (let* ((rules (cg-rules cg))
+  (let* ((rules (cg-rules *current-cg*))
 	 (looked-symbols nil))
     (dolist (item items items)
       (unless (item-suc-null item)
@@ -335,28 +335,28 @@ n	(changed t))
 	  (declare (type fixnum X))
 	  (when (and (cg-non-terminal-p X)
 		     (not (member X looked-symbols)))
-	    (let ((fs (first-symbols cg X)))
+	    (let ((fs (first-symbols X)))
 	      (dolist (rule rules)
 		(when (and (not (member (rule-lhs rule) looked-symbols))
 			   (member (rule-lhs rule) fs :test #'=))
 		  (push (make-item rule 0) items)))
 	      (setf looked-symbols (append fs looked-symbols)))))))))
 
-(defun lr0-goto (cg items symbol)
+(defun lr0-goto (items symbol)
   (declare (optimize (speed 3) (safety 0) (space 0)))
   (let ((base-items (remove-if-not
 		     #'(lambda (item) (and (not (item-suc-null item))
 					   (= symbol (item-next item))))
 		     items)))
-    (cons (lr0-closure cg (mapcar #'shift-item base-items))
+    (cons (lr0-closure (mapcar #'shift-item base-items))
 	  (mapcar #'item-rule
 		  (remove-if #'(lambda (x) (item-suc-null x)) base-items)))))
 
 ;; (define-hash-table-test state=
 ;;     (lambda (x) (sxhash (coerce x 'state))))
 
-(defun lr0-parse-table (cg)
-  (let* ((init-items (lr0-closure cg (list (make-item (first (cg-rules cg)) 0))))
+(defun lr0-parse-table ()
+  (let* ((init-items (lr0-closure (list (make-item (first (cg-rules *current-cg*)) 0))))
 	 (items-ht (make-hash-table :test 'item-set=))
 	 (gotos-ht (make-hash-table :test 'item-set=))
 	 (goto-rules-ht (make-hash-table :test 'item-set=))
@@ -369,7 +369,7 @@ n	(changed t))
 	       (when items-list
 		 (let ((added nil))
 		   (labels ((g (x items)
-			      (destructuring-bind (goto0 . goto-rules) (lr0-goto cg items x)
+			      (destructuring-bind (goto0 . goto-rules) (lr0-goto items x)
 				(let ((goto (sort goto0 #'item<)))
 				(when goto
 				  (multiple-value-bind (next found-p) (gethash goto items-ht)
@@ -386,7 +386,7 @@ n	(changed t))
 		       (let ((symbols nil))
 		       	 (dolist (item items)
 		       	   (when (not (item-suc-null item)) (pushnew (item-next item) symbols)))
-		       	 (dolist (rule (cg-rules cg))
+		       	 (dolist (rule (cg-rules *current-cg*))
 		       	   (when (rule-rhs rule) (pushnew (first (rule-rhs rule)) symbols)))
 		       	 (dolist (x symbols) (g x items))))
 		     (f added))))))
@@ -406,14 +406,14 @@ n	(changed t))
 ;; 
 
 (defstruct (parser
-	    (:constructor make-parser-base (grammar state-array state-num)))
-  grammar
+	    (:constructor make-parser-base (state-array state-num)))
   state-array
   (state-num 0 :type fixnum)
-  (transitions nil :type list)
-  (nt-transitions nil :type list)
   )
 
+(defparameter *pagen-current-parser* nil)
+(defparameter *pagen-transitions* nil)
+(defparameter *pagen-nt-transitions* nil)
 (defparameter *pagen-direct-read* nil)
 (defparameter *pagen-reads* nil)
 (defparameter *pagen-read-set* nil)
@@ -422,52 +422,51 @@ n	(changed t))
 (defparameter *pagen-lookback* nil)
 (defparameter *pagen-lookahead-set* nil)
 
-(defun make-parser (grammar state-array)
-  (make-parser-base grammar state-array (length state-array)))
+(defun make-parser (state-array)
+  (setf *pagen-current-parser* (make-parser-base state-array (length state-array))))
 
-(defun calc-transitions (parser)
+(defun calc-transitions ()
   (let ((result nil)
-	(n (parser-state-num parser)))
+	(n (parser-state-num *pagen-current-parser*)))
     (dotimes (i n)
-      (setf result (append (mapcar #'(lambda (x) (cons i (car x))) (state-gotos (parser-state parser i))) result)))
-    (setf (parser-transitions parser)
+      (setf result (append (mapcar #'(lambda (x) (cons i (car x))) (state-gotos (parser-state i))) result)))
+    (setf *pagen-transitions*
 	  result
-	  (parser-nt-transitions parser)
+	  *pagen-nt-transitions*
 	  (remove-if-not #'(lambda (transition) (cg-non-terminal-p (cdr transition))) result))))
 
-(defun parser-state (parser n)
-  (declare (type parser parser) (fixnum n))
-  (aref (parser-state-array parser) n))
+(defun parser-state (n)
+  (aref (parser-state-array *pagen-current-parser*) n))
 
 ;; 
 ;; DR(p,A)
-(defun calc-direct-read (parser)
+(defun calc-direct-read ()
   (let ((dr-set (make-hash-table :test #'equal))
-	(n (parser-state-num parser)))
+	(n (parser-state-num *pagen-current-parser*)))
     (dotimes (i n)
-      (let ((k (parser-state parser i)))
+      (let ((k (parser-state i)))
 	(dolist (transition (state-gotos k))
 	  (setf (gethash (cons i (car transition)) dr-set)
 		(remove-if-not #'(lambda (x) (cg-terminal-p x))
-			       (mapcar #'car (state-gotos (parser-state parser (cdr transition)))))))))
-    (setf *pagen-direct-read* dr-set)))
+			       (mapcar #'car (state-gotos (parser-state (cdr transition)))))))))
+    dr-set))
 
 ;; note: we don't have to calculate before the calculating lookaheads
-(defun calc-reads (parser)
+(defun calc-reads ()
   (let ((reads (make-hash-table :test #'equal))
-	(n (parser-state-num parser))
+	(n (parser-state-num *pagen-current-parser*))
 	(exist-nullable nil))
     (loop until exist-nullable
-	  for i from 0 to (- (cg-num (parser-grammar parser)) 1)
+	  for i from 0 to (- (cg-num *current-cg*) 1)
 	  do (setf exist-nullable (cg-nullable  i)))
     (when exist-nullable
       (dotimes (i n)
-	(dolist (transition (state-gotos (parser-state parser i)))
+	(dolist (transition (state-gotos (parser-state i)))
 	  (setf (gethash (cons i (car transition)) reads)
 		(mapcar #'(lambda (x) (cons (cdr transition) x))
 			(remove-if-not #'(lambda (x) (cg-nullable  x))
-				       (mapcar #'car (state-gotos (parser-state parser (cdr transition))))))))))
-    (setf *pagen-reads* reads)))
+				       (mapcar #'car (state-gotos (parser-state (cdr transition))))))))))
+    reads))
 
 ;; assoc using equal
 (defun assoceq (item alist)
@@ -511,12 +510,11 @@ n	(changed t))
 		 (setf found (detect-loop rel s :visited (cons x visited) :test test))))
     found))
 
-(defun calc-read-set (parser)
-  (let* ((nt-transitions (parser-nt-transitions parser)))
-    ;; making node-list
-    (setf *pagen-read-set* (alg-digraph nt-transitions *pagen-reads* *pagen-direct-read*))))
+(defun calc-read-set ()
+  ;; making node-list
+  (alg-digraph *pagen-nt-transitions* *pagen-reads* *pagen-direct-read*))
 
-(defun rev-traverse (parser starts sequence)
+(defun rev-traverse (starts sequence)
   ;; (declare (optimize (speed 3) (safety 0) (space 0)))
   (let ((s starts))
     (declare (list s))
@@ -524,14 +522,13 @@ n	(changed t))
     	  do (setf s (apply #'append
     			    (mapcar #'(lambda (n)
     					(mapcar #'car
-    						(filter #'(lambda (p) (= x (cdr p))) (state-comefroms (parser-state parser n)))))
+    						(filter #'(lambda (p) (= x (cdr p))) (state-comefroms (parser-state n)))))
     				    s))))
     s))
 
-(defun calc-includes (parser)
-  (let* ((cg (parser-grammar parser))
-	 (rules (cg-rules cg))
-	 (nt-transitions (parser-nt-transitions parser))
+(defun calc-includes ()
+  (let* ((rules (cg-rules *current-cg*))
+	 (nt-transitions *pagen-nt-transitions*)
 	 (result (make-hash-table :test #'equal)))
     (dolist (transition nt-transitions)	; transition = (p, A)
       (dolist (rule rules)		; rule = X -> aYb
@@ -540,7 +537,7 @@ n	(changed t))
 	  (loop while rhs
 		do (when (and (= (first rhs) (cdr transition))
 			      (cg-sequence-nullable (rest rhs)))
-		     (let* ((starts (rev-traverse parser (list (car transition)) pre))
+		     (let* ((starts (rev-traverse (list (car transition)) pre))
 			    (available (intersection (mapcar #'(lambda (x) (cons x (rule-lhs rule))) starts)
 						     nt-transitions
 						     :test #'equal)))
@@ -549,29 +546,28 @@ n	(changed t))
 				 (union (gethash transition result nil) available))))
 			   ;; (setf (gethash transition result) available))))
 		   (push (pop rhs) pre)))))
-    (setf *pagen-includes* result)))
+    result))
 
 
-(defun calc-follow-set (parser)
-  (let* ((nt-transitions (parser-nt-transitions parser)))
-    (setf *pagen-follow-set* (alg-digraph nt-transitions *pagen-includes* *pagen-read-set*))))
+(defun calc-follow-set ()
+  (alg-digraph *pagen-nt-transitions* *pagen-includes* *pagen-read-set*))
 
-(defun calc-lookback (parser)
+(defun calc-lookback ()
   (let ((result (make-hash-table :test #'equal)))
-    (dotimes (n (parser-state-num parser))
-      (dolist (item (state-items (parser-state parser n)))
+    (dotimes (n (parser-state-num *pagen-current-parser*))
+      (dolist (item (state-items (parser-state n)))
 	(when (item-suc-null item)
-	  (let ((ps (rev-traverse parser (list n) (reverse-take (item-position item) (item-rhs item)))))
+	  (let ((ps (rev-traverse (list n) (reverse-take (item-position item) (item-rhs item)))))
 	    (when ps
 	      (setf (gethash (cons n (rule-id (item-rule item))) result)
 		    (mapcar #'(lambda (p) (cons p (item-lhs item))) ps)) result)))))
-    (setf *pagen-lookback* result)))
+    result))
 
-(defun calc-lookahead-set (parser)
+(defun calc-lookahead-set ()
   (let ((result (make-hash-table :test #'equal))
-	(n (parser-state-num parser)))
+	(n (parser-state-num *pagen-current-parser*)))
     (dotimes (i n)
-      (dolist (item (state-items (parser-state parser i)))
+      (dolist (item (state-items (parser-state i)))
 	(when (item-suc-null item)
 	  (setf (gethash (cons i (rule-id (item-rule item))) result)
 		(remove-duplicates
@@ -579,70 +575,30 @@ n	(changed t))
 					 (gethash (cons i (rule-id (item-rule item))) *pagen-lookback* nil)
 					 ))
 		 :test #'equal)))))
-    (setf *pagen-lookahead-set* result)))
+    result))
 
 
 ;; --------------------------------
 ;;  LALR(1)-parse-table
 ;; 
 
-(defstruct (lalr1-item
-	    (:constructor make-lalr1-item-base (body la-set)))
-  body la-set)
-
-(defun make-lalr1-item (body la-set)
-  (make-lalr1-item-base body (sort la-set #'<)))
-
-(defun lalr1-item= (i1 i2)
-  (declare (type lalr1-item i1 i2))
-  (or (eq i1 i2)
-      (and (item= (lalr1-item-body i1) (lalr1-item-body i2))
-	   (set-eq (lalr1-item-la-set i1) (lalr1-item-la-set i2)))))
-
-
-(defstruct (lalr1-state
-	    (:constructor make-lalr1-state-base (items gotos goto-rules)))
-  items gotos goto-rules)
-
-(defun make-lalr1-state (items gotos goto-rules)
-  (make-lalr1-state-base (sort items #'item< :key #'lalr1-item-body) (sort gotos #'< :key #'car) goto-rules))
-
-
-
-(defstruct (lalr1-parser
-	    (:constructor make-lalr1-parser-base (grammar state-array state-num)))
-  grammar state-array (state-num 0 :type fixnum))
-
-(defun make-lalr1-parser (grammar state-array)
-  (make-lalr1-parser-base grammar state-array (length state-array)))
-
-(defun lalr1-parser-state (lalr1-parser n)
-  ;; TODO: error handling
-  (aref (lalr1-parser-state-array lalr1-parser) n))
-
-(defun deremer-lalr1-parser (cg)
-  (let* ((parser (make-parser cg (lr0-parse-table cg)))
-	 (n (parser-state-num parser))
-	 (lalr1-state-array (make-array n)))
-    (calc-direct-read parser)
-    (calc-reads parser)
-    (calc-transitions parser)
-    (calc-includes parser)
-    (calc-read-set parser)
-    (calc-follow-set parser)
-    (calc-lookback parser)
-    (calc-lookahead-set parser)
-    (dotimes (i (parser-state-num parser))
-      (setf (aref lalr1-state-array i)
-	    (make-lalr1-state
-	      (mapcar #'(lambda (item)
-			  (make-lalr1-item item
-					  (when (item-suc-null item)
-					    (gethash (cons i (rule-id (item-rule item))) *pagen-lookahead-set*))))
-		     (state-items (parser-state parser i)))
-	      (state-gotos (parser-state parser i))
-	      (state-goto-rules (parser-state parser i)))))
-    (make-lalr1-parser (parser-grammar parser) lalr1-state-array)))
+(defun deremer-lalr1-parser ()
+  (make-parser (lr0-parse-table))
+  (let* ((*pagen-direct-read* (calc-direct-read))
+	 (*pagen-reads* (calc-reads))
+	 (*pagen-transitions* (calc-transitions))
+	 (*pagen-includes* (calc-includes))
+	 (*pagen-read-set* (calc-read-set))
+	 (*pagen-follow-set* (calc-follow-set))
+	 (*pagen-lookback* (calc-lookback))
+	 (*pagen-lookahead-set* (calc-lookahead-set)))
+    (dotimes (i (parser-state-num *pagen-current-parser*))
+      (mapcar #'(lambda (item)
+		  (when (item-suc-null item)
+		    (setf (item-la-set item) (gethash (cons i (rule-id (item-rule item))) *pagen-lookahead-set*)))
+		  item)
+	      (state-items (parser-state i))))
+    *pagen-current-parser*))
 
 
 ;; --------------------------------
@@ -659,8 +615,8 @@ n	(changed t))
 
 (defstruct accept-action)
 
-(defun make-action-array (parser &optional (rp-array ()) (sp-array ())) ; lalr1-parser
-  (let* ((n (lalr1-parser-state-num parser))
+(defun make-action-array (&optional (rp-array ()) (sp-array ())) ; lalr1-parser
+  (let* ((n (parser-state-num *pagen-current-parser*))
 	 (conflicts nil)
 	 (action-array (make-array n :initial-element nil)))
     (labels ((rule-rp (rule)
@@ -669,41 +625,40 @@ n	(changed t))
 	     (rule-sp (rule)
 	       (if (null sp-array) 0
 		   (aref sp-array (rule-id rule)))))
-    ;; Shift Action
+      ;; Shift Action
       (dotimes (i n)
 	(setf (aref action-array i)
-	      (mapcar #'(lambda (p) (list (car p) (make-shift-action (cdr p)))) (lalr1-state-gotos (lalr1-parser-state parser i)))))
+	      (mapcar #'(lambda (p) (list (car p) (make-shift-action (cdr p)))) (state-gotos (parser-state i)))))
       ;; Accept Action
       (if (assoc 0 (aref action-array 0))
 	  (pushnew (make-accept-action) (cdr (assoc 0 (aref action-array 0))))
 	  (push (list 0 (make-accept-action)) (aref action-array 0)))
       ;; Reduce Accept Action
       (dotimes (i n)
-	(dolist (lalr1-item (lalr1-state-items (lalr1-parser-state parser i)))
-	  (let ((body (lalr1-item-body lalr1-item)))
-	    (when (item-suc-null body)
-	      (if (null (lalr1-item-la-set lalr1-item))
-		  (pushnew (list -1 (make-reduce-action (item-rule body))) (aref action-array i))
-		  (dolist (la (lalr1-item-la-set lalr1-item))
+	(dolist (item (state-items (parser-state i)))
+	    (when (item-suc-null item)
+	      (if (null (item-la-set item))
+		  (pushnew (list -1 (make-reduce-action (item-rule item))) (aref action-array i))
+		  (dolist (la (item-la-set item))
 		    (let ((action (assoc la (aref action-array i))))
 		      (cond ((null action)
-			     (push (list la (make-reduce-action (item-rule body))) (aref action-array i)))
+			     (push (list la (make-reduce-action (item-rule item))) (aref action-array i)))
 			    (t 
-			     (push (make-reduce-action (item-rule body)) (cdr (assoc la (aref action-array i)))))))))))))
+			     (push (make-reduce-action (item-rule item)) (cdr (assoc la (aref action-array i))))))))))))
       ;; conflict check
       (dotimes (i n)
 	(dolist (l (aref action-array i))
 	  (destructuring-bind (la . actions) l
 	    (when (< 1 (length actions))
 	      (let ((conflict-info nil)
-		    (shift-ps (mapcar #'rule-sp (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i))))))
+		    (shift-ps (mapcar #'rule-sp (cdr (assoc la (state-goto-rules (parser-state i))))))
 		    (ps 0))
 		(when shift-ps (setf ps (apply #'max shift-ps)))
 		(dolist (action actions)
 		  (cond ((reduce-action-p action)
 			 (push (cons 'reduce (reduce-action-rule action)) conflict-info))
 			((shift-action-p action)
-			 (push (cons 'shift (cons (mapcar #'rule-id (cdr (assoc la (lalr1-state-goto-rules (lalr1-parser-state parser i)))))
+			 (push (cons 'shift (cons (mapcar #'rule-id (cdr (assoc la (state-goto-rules (parser-state i)))))
 						  (shift-action-num action)))
 			       conflict-info))
 			(t nil)))
@@ -829,7 +784,7 @@ n	(changed t))
 	((item= (lr1-item-body i1) (lr1-item-body i2))
 	 (< (lr1-item-la i1) (lr1-item-la i2)))))
 
-(defun lr1-closure (cg lr1-items )
+(defun lr1-closure (lr1-items )
   (declare (optimize (speed 3) (safety 0) (space 0)))
   (let ((result lr1-items))
     (labels ((f (items)
@@ -837,7 +792,7 @@ n	(changed t))
 		 (dolist (lr1-item items)
 		   (let ((item (lr1-item-body lr1-item)))
 		     (unless (or (item-suc-null item) (cg-terminal-p (item-next item)))
-		       (dolist (rule (cg-rules cg))
+		       (dolist (rule (cg-rules *current-cg*))
 			 (when (= (the fixnum (item-next item)) (the fixnum (rule-lhs rule)))
 			   (let* ((new-lr1-items (mapcar #'(lambda (x) (make-lr1-item (make-item rule 0) x))
 							 (cg-sequence-first (append (rest (item-suc item)) (list (lr1-item-la lr1-item))))))
@@ -850,11 +805,11 @@ n	(changed t))
     result))
 
 
-(defun db-lalr1-parser (cg)
+(defun db-lalr1-parser ()
   (declare (optimize (speed 3) (safety 0) (space 0)))
-  (let* ((parser (make-parser cg (lr0-parse-table cg)))
-	 (num (parser-state-num parser))
-	 (propagate-symbol (+ (cg-num cg) 1))
+  (let* ((parser (make-parser (lr0-parse-table)))
+	 (num (parser-state-num *pagen-current-parser*))
+	 (propagate-symbol (+ (cg-num *current-cg*) 1))
 	 (propagate-array (make-array num))
 	 (la-set-array (make-array num))
 	 (changed t))
@@ -864,11 +819,11 @@ n	(changed t))
     ;; Determine Look-Ahead Propagation
     (dotimes (i num)
       ;; each item in kernel of state I
-      (dolist (item (items->kernel (state-items (parser-state parser i))))
+      (dolist (item (items->kernel (state-items (parser-state i))))
 	;; all GOTO(I,X)
-	(let ((gotos (state-gotos (parser-state parser i))))
+	(let ((gotos (state-gotos (parser-state i))))
 	  ;; calculate propagation for all item B -> a.Xb s.t. X is non-terminal
-	  (dolist (lr1-item (lr1-closure cg (list (make-lr1-item item propagate-symbol))))
+	  (dolist (lr1-item (lr1-closure (list (make-lr1-item item propagate-symbol))))
 	    (let ((body (lr1-item-body lr1-item)))
 	      (when (and (not (item-suc-null body))
 			 (assoc (item-next body) gotos))
@@ -886,7 +841,7 @@ n	(changed t))
 	     (dotimes (i num)
 	       (let ((propagate-ht (aref propagate-array i)))
 		 ;; for item in state i
-		 (dolist (item (state-items (parser-state parser i)))
+		 (dolist (item (state-items (parser-state i)))
 		   (let ((la-set-ht (aref la-set-array i)))
 		     (dolist (x (gethash item propagate-ht nil))
 		       (cond ((numberp x)
@@ -900,30 +855,23 @@ n	(changed t))
 				  (setf (gethash item la-set-ht) (append dif (gethash item la-set-ht))
 					changed t))))
 			     (t nil))))))))
-    (let ((lalr1-state-array (make-array num)))
-      (dotimes (i num)
-	(setf
-	 (aref lalr1-state-array i)
-	 (make-lalr1-state
-	  (lalr1-closure cg (mapcar #'(lambda (item) (make-lalr1-item item (gethash item (aref la-set-array i))))
-				    (items->kernel (state-items (parser-state parser i)))))
-	  (state-gotos (parser-state parser i))
-	  (state-goto-rules (parser-state parser i)))
-	 ))
-      (make-lalr1-parser (parser-grammar parser) lalr1-state-array))))
+    (dotimes (i num)
+      (setf (state-items (parser-state i))
+	    (lalr1-closure (mapcar #'(lambda (item) (setf (item-la-set item) (gethash item (aref la-set-array i))) item)
+				      (items->kernel (state-items (parser-state i)))))))
+    *pagen-current-parser*))
 
 
-(defun lalr1-closure (cg items)
+(defun lalr1-closure (items)
   (declare (optimize (speed 3) (space 0)))
-  (let ((rules (cg-rules cg)))
-    (dolist (lalr1-item items)
-      (let ((body (lalr1-item-body lalr1-item)))
-	(unless (item-suc-null body)
-	  (let ((X (item-next body)))
+  (let ((rules (cg-rules *current-cg*)))
+    (dolist (item items)
+	(unless (item-suc-null item)
+	  (let ((X (item-next item)))
 	    (when (and (numberp X)
 		       (cg-non-terminal-p X))
-	      (let ((fs (first-symbols cg X)))
+	      (let ((fs (first-symbols X)))
 		(dolist (rule rules)
 		  (when (member (rule-lhs rule) fs)
-		    (pushnew (make-lalr1-item (make-item rule 0) (lalr1-item-la-set lalr1-item)) items :test #'lalr1-item=)))))))))
+		    (pushnew (make-item rule 0 :la-set (item-la-set item)) items :test #'item=))))))))
     items))

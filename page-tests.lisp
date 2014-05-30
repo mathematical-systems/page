@@ -13,7 +13,7 @@
 
 (define-test g1-parse
   (let* ((cg (canonicalize *g1*))
-	 (parser (deremer-lalr1-parser cg))
+	 (parser (deremer-lalr1-parser))
 	 (ast1 '("$accept"
 		  ("E" ("E" ("T" ("F" ("id")))) ("+") ("T" ("F" ("id"))))
 		  ("$eof")))

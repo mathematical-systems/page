@@ -271,6 +271,14 @@
   (let ((input (append l (list eof))))
     #'(lambda () (if (null input) nil (pop input)))))
 
-(defun cg-parse (parser reader &key (dump nil))
-  (parse #'(lambda () (gethash (funcall reader) *cg-symbol-to-num-ht* -1)) (make-action-array parser *cg-rp-array* *cg-sp-array*)
+(defun make-cg-parser (grammar &key (start "$accept") (eof "$eof") (dump nil))
+  (canonicalize-f grammar :start start :eof eof)
+  (deremer-lalr1-parser)
+  #'(lambda (l)
+      (let ((reader (simple-reader l :eof eof)))
+	(parse #'(lambda () (gethash (funcall reader) *cg-symbol-to-num-ht* -1)) (make-action-array *cg-rp-array* *cg-sp-array*)
+	       :function-array *cg-function-array* :dump dump :symbol-printer #'cg-symbol))))
+
+(defun cg-parse (reader &key (dump nil))
+  (parse #'(lambda () (gethash (funcall reader) *cg-symbol-to-num-ht* -1)) (make-action-array *cg-rp-array* *cg-sp-array*)
 	 :function-array *cg-function-array* :dump dump :symbol-printer #'cg-symbol))
