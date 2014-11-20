@@ -1,14 +1,15 @@
 (progn
-  (compile-file "page-core.lisp")
-  (load "page-core.fasl")
+  (compile-file "pagen.lisp")
+  (load "pagen.fasl")
   (compile-file "page.lisp")
   (load "page.fasl")
-  (compile-file "grammar-sample.lisp")
-  (load "grammar-sample.fasl")
   (compile-file "lisp-unit.lisp")
   (load "lisp-unit.fasl")
-  (compile-file "page-tests.lisp")
-  (load "page-tests.fasl"))
+  (compile-file "pagen-test.lisp")
+  (load "pagen-test.fasl")
+  (compile-file "page-test.lisp")
+  (load "page-test.fasl")
+  )
   
 
 

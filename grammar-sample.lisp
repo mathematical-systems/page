@@ -1,6 +1,79 @@
 (in-package #:page)
 (export '(*g1-f* *g-arith* *g-reg* *g-reg-tiger* *g-reg-tiger-inv* *input-g-reg-tiger-1* *input-g-reg-tiger-2* *g-arith* *g-if* *g-minus* *g1* *g2* *g3* *g4* *g5* *g6* *g7* *g8* *G9* *G10* *g11* *cbnf*))
 
+(defparameter *g-example-arith*
+  (make-page-grammar "E"
+		'(
+		  ("E" "E" "+" "E")
+		  ("E" "E" "*" "E")
+		  ("E" "E" "-" "E")
+		  ("E" "E" "/" "E")
+		  ("E" "(" "E" ")")
+		  ("E" "id")
+		  )))
+(defparameter *g-example-bool*
+  (make-page-grammar "B"
+		'(
+		  ("B" "B" "and" "B")
+		  ("B" "B" "or" "B")
+		  ("B" "not" "B")
+		  ("B" "(" "B" ")")
+		  ("B" "bool")
+		  )))
+
+(defparameter *g-example-ab*
+  (make-page-grammar "E"
+		'(
+		  ("E" "E" "+" "E")
+		  ("E" "E" "*" "E")
+		  ("E" "E" "-" "E")
+		  ("E" "E" "/" "E")
+		  ("E" "(" "E" ")")
+		  ("E" "id")
+		  ("B" "E" "=" "E")
+		  ("B" "E" "<" "E")
+		  ("B" "E" ">" "E")
+		  ("B" "B" "and" "B")
+		  ("B" "B" "or" "B")
+		  ("B" "not" "B")
+		  ("B" "(" "B" ")")
+		  ("B" "bool")
+		  )))
+
+(defparameter *g-example-if*
+  (make-page-grammar "E"
+		'(
+		  ("E" "E" "+" "E")
+		  ("E" "E" "*" "E")
+		  ("E" "(" "E" ")")
+		  ("E" "id")
+		  ;; ("E" "if" "B" "then" "E")
+		  ;; dangling else ......
+		  ("E" "if" "E" "then" "E" "else" "E")
+		  ("E" "if" "E" "then" "E")
+		  )))
+
+(defparameter *g-example*
+  (make-page-grammar "E"
+		'(
+		  ("E" "E" "+" "E")
+		  ("E" "E" "*" "E")
+		  ("E" "E" "-" "E")
+		  ("E" "E" "/" "E")
+		  ("E" "(" "E" ")")
+		  ("E" "id")
+		  ("B" "E" "=" "E")
+		  ("B" "E" "<" "E")
+		  ("B" "E" ">" "E")
+		  ("B" "B" "and" "B")
+		  ("B" "B" "or" "B")
+		  ("B" "not" "B")
+		  ("B" "(" "B" ")")
+		  ("B" "bool")
+		  ;; ("E" "if" "B" "then" "E")
+		  ("E" "if" "B" "then" "E" "else" "E")
+		  )))
+
 ;; Grammar samples
 (defparameter *g1-f*
   (make-grammar "E"
@@ -124,7 +197,7 @@
 		  ((E id) ,#'(lambda (x) (list 'E (list x))) (0 . 0)))))
 
 (defparameter *g1*
-  (make-grammar "E"
+  (make-page-grammar "E"
 		'(("E" "E" "+" "T") ("E" "T") ("T" "T" "*" "F") ("T" "F")
 		  ("F" "(" "E" ")") ("F" "id")))) 
 (defparameter *g2*
